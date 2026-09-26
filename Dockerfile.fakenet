@@ -1,0 +1,4 @@
+FROM python:3.10-slim
+WORKDIR /sandbox
+COPY fakenet_server.py /sandbox/fakenet_server.py
+CMD ["python", "fakenet_server.py"]

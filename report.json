@@ -1,0 +1,24 @@
+{
+  "file": "delayed_malware.pt",
+  "verdict": "suspicious",
+  "streams": [
+    {
+      "stream": "delayed_malware/data.pkl",
+      "verdict": "suspicious",
+      "findings": [
+        {
+          "position": 2,
+          "opcode": "GLOBAL",
+          "target": "__builtin__.eval",
+          "reason": "target not in allowlist"
+        },
+        {
+          "position": 568,
+          "opcode": "REDUCE",
+          "target": "__builtin__.eval",
+          "reason": "call/build on non-allowlisted target"
+        }
+      ]
+    }
+  ]
+}

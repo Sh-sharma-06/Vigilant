@@ -3,35 +3,5 @@
     "processes_executed": [
         "/usr/local/bin/python"
     ],
-    "suspicious_file_activity": [
-        "/usr/local/lib/python3.10/__pycache__/sre_parse.cpython-310.pyc.136250676179024",
-        "/usr/local/lib/python3.10/__pycache__/struct.cpython-310.pyc.136250676172528",
-        "/usr/local/lib/python3.10/__pycache__/abc.cpython-310.pyc.136250678066656",
-        "/usr/local/lib/python3.10/__pycache__/_sitebuiltins.cpython-310.pyc.136250677231024",
-        "/usr/local/lib/python3.10/__pycache__/functools.cpython-310.pyc.136250676169280",
-        "/usr/local/lib/python3.10/__pycache__/site.cpython-310.pyc.136250677084208",
-        "/usr/local/lib/python3.10/__pycache__/io.cpython-310.pyc.136250678066320",
-        "/usr/local/lib/python3.10/__pycache__/sre_compile.cpython-310.pyc.136250677919408",
-        "/usr/local/lib/python3.10/encodings/__pycache__/aliases.cpython-310.pyc.136250677919536",
-        "/usr/local/lib/python3.10/__pycache__/os.cpython-310.pyc.136250677084432",
-        "/usr/local/lib/python3.10/__pycache__/codecs.cpython-310.pyc.136250678066320",
-        "/usr/local/lib/python3.10/encodings/__pycache__/utf_8.cpython-310.pyc.136250677919280",
-        "/usr/local/lib/python3.10/__pycache__/reprlib.cpython-310.pyc.136250676175888",
-        "/usr/local/lib/python3.10/__pycache__/_collections_abc.cpython-310.pyc.136250677911728",
-        "/usr/local/lib/python3.10/__pycache__/re.cpython-310.pyc.136250676170176",
-        "/usr/local/lib/python3.10/collections/__pycache__/__init__.cpython-310.pyc.136250677918512",
-        "/usr/local/lib/python3.10/__pycache__/stat.cpython-310.pyc.136250677084992",
-        "/usr/local/lib/python3.10/__pycache__/copyreg.cpython-310.pyc.136250676169280",
-        "/usr/local/lib/python3.10/site-packages/_distutils_hack/__pycache__/__init__.cpython-310.pyc.136250677437056",
-        "/usr/local/lib/python3.10/__pycache__/sre_constants.cpython-310.pyc.136250677919024",
-        "/usr/local/lib/python3.10/__pycache__/posixpath.cpython-310.pyc.136250677092384",
-        "/usr/local/lib/python3.10/__pycache__/pickle.cpython-310.pyc.136250677095968",
-        "/usr/local/lib/python3.10/__pycache__/keyword.cpython-310.pyc.136250676171968",
-        "/usr/local/lib/python3.10/__pycache__/_compat_pickle.cpython-310.pyc.136250677916208",
-        "/usr/local/lib/python3.10/encodings/__pycache__/__init__.cpython-310.pyc.136250677909936",
-        "/usr/local/lib/python3.10/__pycache__/operator.cpython-310.pyc.136250676172192",
-        "/usr/local/lib/python3.10/__pycache__/genericpath.cpython-310.pyc.136250677231024",
-        "/usr/local/lib/python3.10/__pycache__/types.cpython-310.pyc.136250677097872",
-        "/usr/local/lib/python3.10/__pycache__/enum.cpython-310.pyc.136250676169952"
-    ]
+    "suspicious_file_activity": []
 }

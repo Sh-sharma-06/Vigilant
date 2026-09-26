@@ -1,0 +1,2 @@
+{"timestamp": "2026-09-26T17:08:44.621983Z", "source_ip": "172.18.0.3", "source_port": 56790, "data_preview": "GET / HTTP/1.1\r\nHost: 93.184.216.34\r\nUser-Agent: curl/8.14.1\r\nAccept: */*\r\n\r\n"}
+{"timestamp": "2026-09-26T17:09:57.136787Z", "source_ip": "172.18.0.3", "source_port": 51098, "data_preview": ""}
