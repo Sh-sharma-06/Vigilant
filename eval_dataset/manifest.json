@@ -1,0 +1,35 @@
+{
+  "dataset_description": "Evaluation dataset for Vigilant EL project. Contains paired benign and malicious ML models.",
+  "samples": [
+    {
+      "filename": "canary_model.pt",
+      "category": "synthetic_safe",
+      "source": "internal",
+      "notes": "Safe trigger testing model. Drops benign marker file."
+    },
+    {
+      "filename": "benign_vision_resnet.bin",
+      "category": "vision",
+      "source": "huggingface/hf-internal-testing/tiny-random-resnet",
+      "notes": "Safe, known-benign baseline model"
+    },
+    {
+      "filename": "benign_nlp_bert.bin",
+      "category": "nlp",
+      "source": "huggingface/prajjwal1/bert-tiny",
+      "notes": "Safe, known-benign baseline model"
+      },{
+      "filename": "benign_audio_resnet.pth",
+      "category": "audio",
+      "source": "huggingface/lamtdhe1860336/YOUR_REPO_NAME", 
+      "notes": "Benign ESC-50 audio classification model."
+    },
+    {
+      "filename": "benign_tts_kokoro.pth",
+      "category": "text-to-speech",
+      "source": "huggingface/author_name/model_name",
+      "notes": "Benign Kokoro TTS model."
+    }
+    
+  ]
+}
