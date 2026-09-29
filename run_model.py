@@ -1,10 +1,25 @@
+import os
 import random
 import sys
+from pathlib import Path
 
 import torch
 
+# Dynamic loading may execute pickle payloads. Refuse host execution even when
+# this module is invoked directly by mistake.
+if not os.path.exists("/.dockerenv"):
+    sys.exit(
+        "CRITICAL SECURITY EXCEPTION: Dynamic analysis must ONLY be executed "
+        "inside the isolated Docker sandbox. Halting execution."
+    )
+
 
 def main(model_path: str) -> int:
+    # Full-module PyTorch archives may reference a class beside the model. The
+    # runner mounts only that directory, and imports remain contained in Docker.
+    model_directory = str(Path(model_path).resolve().parent)
+    if model_directory not in sys.path:
+        sys.path.insert(0, model_directory)
     try:
         # This deliberately permits pickle execution and must run only in Docker.
         loaded_obj = torch.load(model_path, map_location="cpu", weights_only=False)

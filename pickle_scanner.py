@@ -20,6 +20,14 @@ import sys
 import zipfile
 from pathlib import Path
 
+# Archive limits are checked from the central directory before any member is
+# decompressed. They keep a crafted .pt/zip file from consuming unbounded RAM
+# or CPU while the scanner is looking for data.pkl.
+MAX_ZIP_MEMBERS = 10_000
+MAX_ZIP_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
+MAX_ZIP_COMPRESSION_RATIO = 1_000
+MAX_PICKLE_STREAM_BYTES = 64 * 1024 * 1024
+
 # ---------------------------------------------------------------------------
 # ALLOWLIST
 # Format: {"module.qualname", ...}
@@ -88,10 +96,31 @@ def _iter_pickle_streams(path: Path):
     """
     if zipfile.is_zipfile(path):
         with zipfile.ZipFile(path) as zf:
-            for name in zf.namelist():
-                if name.endswith(".pkl") or name.endswith("/data.pkl"):
-                    yield name, zf.read(name)
+            members = zf.infolist()
+            if len(members) > MAX_ZIP_MEMBERS:
+                raise ValueError(f"unsafe zip archive: {len(members)} members exceeds limit")
+
+            total_uncompressed = sum(info.file_size for info in members)
+            if total_uncompressed > MAX_ZIP_UNCOMPRESSED_BYTES:
+                raise ValueError(
+                    "unsafe zip archive: declared uncompressed size exceeds limit"
+                )
+
+            for info in members:
+                # A zero-sized compressed member is harmless. A non-empty
+                # member with zero compressed bytes is malformed/suspicious.
+                if info.file_size and not info.compress_size:
+                    raise ValueError(f"unsafe zip archive: invalid compressed size for {info.filename}")
+                if info.compress_size and info.file_size / info.compress_size > MAX_ZIP_COMPRESSION_RATIO:
+                    raise ValueError(f"unsafe zip archive: compression ratio exceeds limit for {info.filename}")
+
+                if info.filename.endswith(".pkl") or info.filename.endswith("/data.pkl"):
+                    if info.file_size > MAX_PICKLE_STREAM_BYTES:
+                        raise ValueError(f"unsafe zip archive: pickle stream exceeds limit for {info.filename}")
+                    yield info.filename, zf.read(info)
     else:
+        if path.stat().st_size > MAX_PICKLE_STREAM_BYTES:
+            raise ValueError("unsafe pickle stream: file size exceeds limit")
         yield path.name, path.read_bytes()
 
 
@@ -168,7 +197,10 @@ def scan_file(path: Path) -> dict:
     if not path.exists():
         return {"file": str(path), "verdict": "error", "error": "file not found"}
 
-    stream_results = [scan_stream(label, data) for label, data in _iter_pickle_streams(path)]
+    try:
+        stream_results = [scan_stream(label, data) for label, data in _iter_pickle_streams(path)]
+    except (OSError, ValueError, zipfile.BadZipFile, zipfile.LargeZipFile) as exc:
+        return {"file": str(path), "verdict": "error", "error": str(exc)}
 
     if not stream_results:
         return {"file": str(path), "verdict": "error", "error": "no pickle stream found in file"}

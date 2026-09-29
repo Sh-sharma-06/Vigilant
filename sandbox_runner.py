@@ -1,5 +1,4 @@
 import os
-import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -11,31 +10,27 @@ SANDBOX_IMAGE = "vigilant-sandbox"
 
 
 def run_sandbox(model_path: str) -> str:
-    """Detonate a project-local model and return a non-success status on failure."""
+    """Detonate one model with no host writes outside the dedicated log folder."""
     LOG_DIR.mkdir(exist_ok=True)
     for log_file in (LOG_DIR / "strace_output.log", LOG_DIR / "report.json"):
         if log_file.exists():
             log_file.unlink()
 
-    try:
-        relative_model = Path(model_path).resolve().relative_to(PROJECT_DIR)
-    except ValueError:
-        print("Model path must be inside the Vigilant project directory.")
-        return "ERROR_INVALID_PATH"
-
-    host_model = PROJECT_DIR / relative_model
+    host_model = Path(model_path).resolve()
     if not host_model.is_file():
         print(f"Model file not found: {host_model}")
         return "ERROR_INVALID_PATH"
 
-    safe_model = shlex.quote(f"/sandbox/{relative_model.as_posix()}")
+    model_dir = host_model.parent
+    container_model = f"/sandbox/model/{host_model.name}"
     docker_cmd = [
         "docker", "run", "--rm", "--network", "fakenet-isolated",
-        "--cap-drop", "ALL", "--read-only", "--memory=2g", "--cpus=1.0", "--pids-limit=50",
-        "-v", f"{PROJECT_DIR}:/sandbox:ro", "-v", f"{LOG_DIR}:/tmp/logs",
-        SANDBOX_IMAGE, "bash", "-c",
-        "strace -f -s 4096 -o /tmp/logs/strace_output.log "
-        f"python /sandbox/run_model.py {safe_model}",
+        "--user", "10001:10001", "--security-opt", "no-new-privileges=true",
+        "--cap-drop", "ALL", "--read-only", "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m",
+        "--memory=2g", "--cpus=1.0", "--pids-limit=50",
+        "-v", f"{model_dir}:/sandbox/model:ro", "-v", f"{LOG_DIR}:/sandbox/logs",
+        SANDBOX_IMAGE, "strace", "-f", "-s", "4096", "-o", "/sandbox/logs/strace_output.log",
+        "python", "/sandbox/run_model.py", container_model,
     ]
     try:
         result = subprocess.run(docker_cmd, capture_output=True, text=True, timeout=120)
