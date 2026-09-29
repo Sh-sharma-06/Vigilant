@@ -34,7 +34,9 @@ def analyze_telemetry(parsed_data):
         # TODO: Implement Phase 4 Category-Based Domain Allowlist (e.g., huggingface.co IPs)
         # Currently flagging all external IPs equally as a baseline constraint.
         if ip not in ["127.0.0.1", "0.0.0.0"]:
-            score += 50
+            # Any external connection is an immediate high-confidence
+            # compromise indicator; it must not be diluted by other scoring.
+            score = 100
             reasons.append(f"External network connection: {ip}:{conn.get('port')}")
 
     score = min(score, 100)

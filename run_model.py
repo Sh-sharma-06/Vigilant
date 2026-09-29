@@ -1,17 +1,39 @@
-import torch
+import random
 import sys
 
-# Get the model file passed from the runner
-model_path = sys.argv[1] if len(sys.argv) > 1 else "/sandbox/canary_model.pt"
-print(f"[*] Loading model: {model_path}")
+import torch
 
-# Load the model (the malicious monkey-patch executes here, but doesn't detonate)
-model = torch.load(model_path, weights_only=False)
 
-print("[*] Simulating inference passes...")
-for i in range(1, 10):
-    print(f"    Pass {i}...")
-    # Feed dummy data into the model. Pass 5 triggers the payload.
-    _ = model(torch.randn(1, 10))
+def main(model_path: str) -> int:
+    try:
+        # This deliberately permits pickle execution and must run only in Docker.
+        loaded_obj = torch.load(model_path, map_location="cpu", weights_only=False)
+    except Exception as error:
+        print(f"Load failed (missing class defs or invalid format): {error}")
+        return 1
 
-print("[*] Inference complete.")
+    if isinstance(loaded_obj, dict):
+        print("Safely loaded state_dict. Skipping execution.")
+        return 0
+    if not callable(loaded_obj):
+        print(f"Loaded object is not callable ({type(loaded_obj).__name__}). Skipping execution.")
+        return 0
+
+    # Five calls retain coverage for common delayed triggers while keeping the
+    # total randomized instead of relying on the demo's old fixed nine passes.
+    num_calls = random.randint(5, 15)
+    print(f"Fuzzing {num_calls} inference calls.")
+    for _ in range(num_calls):
+        try:
+            dummy_input = torch.randn(1, random.choice([3, 10, 16, 64]))
+            loaded_obj(dummy_input)
+        except Exception:
+            pass
+    return 0
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Usage: python run_model.py <model_file>")
+        sys.exit(2)
+    sys.exit(main(sys.argv[1]))

@@ -15,7 +15,7 @@ EXPECTED_MARKERS = ["canary_fired.txt", "93.184.216.34"]
 def run_and_capture(model_file):
     """Run sandbox_runner.py and return the resulting strace log contents."""
     subprocess.run(["python", "sandbox_runner.py", model_file], check=True)
-    with open("strace_output.log") as f:
+    with open("logs/strace_output.log") as f:
         return f.read()
 
 

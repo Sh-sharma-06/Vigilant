@@ -1,80 +1,65 @@
-import subprocess
 import os
+import shlex
+import subprocess
 import sys
+from pathlib import Path
 
 
-def get_sinkhole_ip():
-    result = subprocess.run(
-        ["docker", "inspect", "-f",
-         "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
-         "fakenet-sinkhole-container"],
-        capture_output=True, text=True
-    )
-    ip = result.stdout.strip()
-    if not ip:
-        raise RuntimeError(
-            "Could not find fakenet-sinkhole-container IP. "
-            "Did you run ./setup_fakenet.sh first?"
-        )
-    return ip
+PROJECT_DIR = Path(__file__).resolve().parent
+LOG_DIR = PROJECT_DIR / "logs"
+SANDBOX_IMAGE = "vigilant-sandbox"
 
 
-def get_network_gateway():
-    result = subprocess.run(
-        ["docker", "network", "inspect", "fakenet-isolated",
-         "-f", "{{range .IPAM.Config}}{{.Gateway}}{{end}}"],
-        capture_output=True, text=True
-    )
-    gateway = result.stdout.strip()
-    if not gateway:
-        raise RuntimeError("Could not find fakenet-isolated network gateway.")
-    return gateway
-
-
-def detonate_model(model_filename):
-    print(f"[*] Provisioning isolated container for {model_filename}...")
-
-    current_dir = os.path.abspath(os.path.dirname(__file__))
-    sinkhole_ip = get_sinkhole_ip()
-    gateway_ip = get_network_gateway()
-    print(f"[*] Sinkhole located at {sinkhole_ip}:8080")
-    print(f"[*] Network gateway: {gateway_ip}")
-
-    # 1. Add a default route so the kernel's routing lookup succeeds for
-    #    ANY destination (even ones with no real path out) -- otherwise
-    #    the connection is rejected before iptables ever sees the packet.
-    # 2. DNAT redirects that packet to the sinkhole instead of letting it
-    #    actually leave -- this is what makes interception IP-agnostic.
-    inner_cmd = (
-        f"ip route add default via {gateway_ip} 2>/dev/null; "
-        f"iptables -t nat -A OUTPUT -p tcp -j DNAT --to-destination {sinkhole_ip}:8080 && "
-        f"strace -f -e trace=file,process,network -o /sandbox/strace_output.log "
-        f"python run_model.py {model_filename}"
-    )
-
-    cmd = [
-        "docker", "run", "--rm",
-        "--network", "fakenet-isolated",
-        "--cap-add=NET_ADMIN",
-        "-v", f"{current_dir}:/sandbox",
-        "ml-sandbox",
-        "bash", "-c", inner_cmd
-    ]
+def run_sandbox(model_path: str) -> str:
+    """Detonate a project-local model and return a non-success status on failure."""
+    LOG_DIR.mkdir(exist_ok=True)
+    for log_file in (LOG_DIR / "strace_output.log", LOG_DIR / "report.json"):
+        if log_file.exists():
+            log_file.unlink()
 
     try:
-        print("[*] Detonating payload and capturing syscalls...")
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        print(result.stdout)
-        if result.returncode != 0:
-            print("[!] STDERR:", result.stderr)
-        print("[*] Execution finished. Container destroyed.")
-        print("[*] Telemetry saved to strace_output.log")
-    except Exception as e:
-        print(f"[!] Sandbox error: {e}")
+        relative_model = Path(model_path).resolve().relative_to(PROJECT_DIR)
+    except ValueError:
+        print("Model path must be inside the Vigilant project directory.")
+        return "ERROR_INVALID_PATH"
+
+    host_model = PROJECT_DIR / relative_model
+    if not host_model.is_file():
+        print(f"Model file not found: {host_model}")
+        return "ERROR_INVALID_PATH"
+
+    safe_model = shlex.quote(f"/sandbox/{relative_model.as_posix()}")
+    docker_cmd = [
+        "docker", "run", "--rm", "--network", "fakenet-isolated",
+        "--cap-drop", "ALL", "--read-only", "--memory=2g", "--cpus=1.0", "--pids-limit=50",
+        "-v", f"{PROJECT_DIR}:/sandbox:ro", "-v", f"{LOG_DIR}:/tmp/logs",
+        SANDBOX_IMAGE, "bash", "-c",
+        "strace -f -s 4096 -o /tmp/logs/strace_output.log "
+        f"python /sandbox/run_model.py {safe_model}",
+    ]
+    try:
+        result = subprocess.run(docker_cmd, capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        print("Sandbox execution timed out.")
+        return "ERROR_TIMEOUT"
+    except OSError as error:
+        print(f"Sandbox could not be started: {error}")
+        return "ERROR"
+
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.returncode != 0:
+        print(f"Sandbox failed/crashed. Error: {result.stderr}")
+        return "ERROR"
+    if not (LOG_DIR / "strace_output.log").is_file():
+        print("Sandbox completed without producing telemetry.")
+        return "ERROR"
+    print(f"Telemetry saved to {LOG_DIR / 'strace_output.log'}")
+    return "SUCCESS"
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        detonate_model(sys.argv[1])
-    else:
-        print("Usage: python sandbox_runner.py <model_file.pkl>")
+    if len(sys.argv) != 2:
+        print("Usage: python sandbox_runner.py <model_file>")
+        sys.exit(2)
+    sys.exit(0 if run_sandbox(sys.argv[1]) == "SUCCESS" else 1)

@@ -63,8 +63,9 @@ ALLOWLIST = {
     "torch.BoolStorage",
 }
 
-# Opcode that actually invokes a callable during unpickling.
-CALL_OPCODES = {"REDUCE", "BUILD", "NEWOBJ", "NEWOBJ_EX"}
+# Opcodes that instantiate or invoke a callable during unpickling. BUILD only
+# applies state to an already-created object and is not itself a call.
+CALL_OPCODES = {"REDUCE", "NEWOBJ", "NEWOBJ_EX"}
 
 # Opcodes that push a string literal onto the pickle VM stack. STACK_GLOBAL
 # (protocol >= 4, the default in modern pickle/torch.save) doesn't carry its

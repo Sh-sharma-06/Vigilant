@@ -1,4 +1,6 @@
 venv/
 *.log
 *.pkl
-echo "__pycache__/" >> .gitignore
+__pycache__/
+logs/*
+!logs/.gitkeep
