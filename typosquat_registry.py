@@ -1,5 +1,7 @@
-import json
 import difflib
+import hashlib
+import json
+from pathlib import Path
 from pydantic import BaseModel
 
 class RegistryEntry(BaseModel):
@@ -22,12 +24,43 @@ class TyposquatRegistry:
             "bert-base-uncased": RegistryEntry(name="bert-base-uncased", expected_hash="3f4a5b6c...", author="google")
         }
         
-    def check_model(self, target_name: str, threshold: float = 0.7) -> dict:
-        """Checks for exact matches, then flags near-miss typosquats."""
+    @staticmethod
+    def _sha256(filepath: str | Path) -> str:
+        """Hash a candidate model without loading it into memory or executing it."""
+        digest = hashlib.sha256()
+        with Path(filepath).open("rb") as model_file:
+            for block in iter(lambda: model_file.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+
+    def check_model(self, target_name: str, filepath: str | Path | None = None, threshold: float = 0.7) -> dict:
+        """Checks exact names and hashes before considering near-miss typosquats."""
         if target_name in self.known_models:
+            if filepath is None:
+                return {
+                    "status": "rejected_hash_unverified",
+                    "alert": "A registered name is not trusted without a model file hash.",
+                }
+            try:
+                actual_hash = self._sha256(filepath)
+            except OSError as e:
+                return {
+                    "status": "rejected_hash_unverified",
+                    "alert": f"Could not hash model file: {e}",
+                }
+
+            expected_hash = self.known_models[target_name].expected_hash
+            if actual_hash != expected_hash:
+                return {
+                    "status": "rejected_hash_mismatch",
+                    "alert": "Registered model name does not match its expected SHA-256 hash.",
+                    "expected_hash": expected_hash,
+                    "actual_hash": actual_hash,
+                }
             return {
                 "status": "safe", 
-                "match": self.known_models[target_name].model_dump()
+                "match": self.known_models[target_name].model_dump(),
+                "sha256": actual_hash,
             }
             
         # difflib uses Gestalt pattern matching (similar to Levenshtein distance)

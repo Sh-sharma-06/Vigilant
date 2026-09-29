@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Any, Optional
 
 import requests
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 
 class Severity(str, Enum):
@@ -99,6 +99,10 @@ You MUST output valid JSON matching EXACTLY this schema. Do NOT omit any keys su
 """
 
 class TriageAgent:
+    # A score at or above this value is a definitive static finding.  An LLM
+    # may add context, but it must never override this security boundary.
+    STATIC_MALWARE_THRESHOLD = 100
+
     def __init__(self, client: Optional[GemmaClient] = None):
         self.client = client or GemmaClient()
 
@@ -114,7 +118,31 @@ class TriageAgent:
         
         verdict_prompt = reasoning_prompt + "\n\nYOUR REASONING:\n" + reasoning + "\n\n" + VERDICT_PROMPT
         raw = self.client.generate(verdict_prompt, json_mode=True)
-        return self._parse_verdict(raw)
+        result = self._parse_verdict(raw)
+
+        # Prefer an explicit score when one is supplied.  The current static
+        # scanner reports a verdict rather than a numeric score, so a
+        # suspicious verdict is normalized to the definitive threshold.
+        static_score = static_scanner_output.get("static_score", static_scanner_output.get("score"))
+        if static_score is None:
+            static_score = (
+                self.STATIC_MALWARE_THRESHOLD
+                if static_scanner_output.get("verdict") == "suspicious"
+                else 0
+            )
+        else:
+            try:
+                static_score = float(static_score)
+            except (TypeError, ValueError):
+                static_score = 0
+
+        if static_score >= self.STATIC_MALWARE_THRESHOLD and result.verdict == Verdict.SAFE:
+            result.verdict = Verdict.UNCERTAIN
+            result.summary = (
+                "LLM safe verdict overridden: static analysis met the "
+                "definitive-malware threshold. " + result.summary
+            )
+        return result
 
     @staticmethod
     def _parse_verdict(raw: str) -> TriageResult:
@@ -130,7 +158,15 @@ class TriageAgent:
                 findings=[],
                 summary=f"Agent output was not valid JSON: {e}",
             )
-        return TriageResult(**data)
+        try:
+            return TriageResult(**data)
+        except (TypeError, ValidationError) as e:
+            return TriageResult(
+                verdict=Verdict.UNCERTAIN,
+                confidence=0.0,
+                findings=[],
+                summary=f"Agent output did not match the required schema: {e}",
+            )
         
     def consistency_check(
         self,
