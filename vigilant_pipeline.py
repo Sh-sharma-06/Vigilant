@@ -29,9 +29,10 @@ def run_pipeline(model_path: str) -> int:
     from typosquat_registry import TyposquatRegistry
 
     registry = TyposquatRegistry()
-    registry_result = registry.check_model(model.name, model)
+    # Registry keys are canonical model names without serialization suffixes.
+    registry_result = registry.check_model(model.stem, model)
     report["registry"] = registry_result
-    if registry_result["status"].startswith("rejected_"):
+    if registry_result["status"] != "safe":
         report.update({"verdict": "REJECTED", "error": "registry hash verification failed"})
         _write_report(report)
         return 1

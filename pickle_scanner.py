@@ -44,6 +44,8 @@ ALLOWLIST = {
     "builtins.frozenset",
     "builtins.complex",
     "builtins.bytearray",
+    # Python 2 module alias retained in older torch checkpoints.
+    "__builtin__.set",
 
     # numpy scalar / array reconstruction (common in older checkpoints)
     "numpy.core.multiarray._reconstruct",
@@ -69,6 +71,29 @@ ALLOWLIST = {
     "torch.CharStorage",
     "torch.ByteStorage",
     "torch.BoolStorage",
+
+    # Standard torch.nn building blocks. These are concrete, reviewed module
+    # classes rather than a broad torch.nn wildcard, so custom model classes
+    # still require review.
+    "torch.nn.modules.container.Sequential",
+    "torch.nn.modules.linear.Linear",
+    "torch.nn.modules.conv.Conv1d",
+    "torch.nn.modules.conv.Conv2d",
+    "torch.nn.modules.conv.Conv3d",
+    "torch.nn.modules.batchnorm.BatchNorm1d",
+    "torch.nn.modules.batchnorm.BatchNorm2d",
+    "torch.nn.modules.batchnorm.BatchNorm3d",
+    "torch.nn.modules.activation.ReLU",
+    "torch.nn.modules.activation.GELU",
+    "torch.nn.modules.activation.Sigmoid",
+    "torch.nn.modules.activation.Tanh",
+    "torch.nn.modules.dropout.Dropout",
+    "torch.nn.modules.pooling.MaxPool1d",
+    "torch.nn.modules.pooling.MaxPool2d",
+    "torch.nn.modules.pooling.MaxPool3d",
+    "torch.nn.modules.pooling.AdaptiveAvgPool1d",
+    "torch.nn.modules.pooling.AdaptiveAvgPool2d",
+    "torch.nn.modules.pooling.AdaptiveAvgPool3d",
 }
 
 # Opcodes that instantiate or invoke a callable during unpickling. BUILD only

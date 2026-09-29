@@ -21,7 +21,12 @@ class TyposquatRegistry:
         self.known_models: dict[str, RegistryEntry] = {
             "gemma:2b": RegistryEntry(name="gemma:2b", expected_hash="b50d6c999e592ae4f79acae23b4feaefbdfceaa7cd366df2610e3072c052a160", author="google"),
             "llama3:8b": RegistryEntry(name="llama3:8b", expected_hash="a1b2c3d4...", author="meta"),
-            "bert-base-uncased": RegistryEntry(name="bert-base-uncased", expected_hash="3f4a5b6c...", author="google")
+            "bert-base-uncased": RegistryEntry(name="bert-base-uncased", expected_hash="3f4a5b6c...", author="google"),
+            "benign_model": RegistryEntry(
+                name="benign_model",
+                expected_hash="89968f5d5b2fc93cd4d4268e00834e192118a50fdc31b541f60618de7296058e",
+                author="Vigilant repository fixture",
+            ),
         }
         
     @staticmethod
@@ -38,21 +43,21 @@ class TyposquatRegistry:
         if target_name in self.known_models:
             if filepath is None:
                 return {
-                    "status": "rejected_hash_unverified",
+                    "status": "REJECT_UNVERIFIED",
                     "alert": "A registered name is not trusted without a model file hash.",
                 }
             try:
                 actual_hash = self._sha256(filepath)
             except OSError as e:
                 return {
-                    "status": "rejected_hash_unverified",
+                    "status": "REJECT_UNVERIFIED",
                     "alert": f"Could not hash model file: {e}",
                 }
 
             expected_hash = self.known_models[target_name].expected_hash
             if actual_hash != expected_hash:
                 return {
-                    "status": "rejected_hash_mismatch",
+                    "status": "REJECT_HASH_MISMATCH",
                     "alert": "Registered model name does not match its expected SHA-256 hash.",
                     "expected_hash": expected_hash,
                     "actual_hash": actual_hash,
@@ -69,12 +74,15 @@ class TyposquatRegistry:
         
         if matches:
             return {
-                "status": "warning_typosquat",
+                "status": "REJECT_TYPOSQUAT",
                 "alert": f"Potential typosquat detected. Did you mean '{matches[0]}'?",
                 "suggested_safe_alternative": self.known_models[matches[0]].model_dump()
             }
             
-        return {"status": "unknown", "alert": "Model not found in registry. Proceed with caution."}
+        return {
+            "status": "REJECT_UNVERIFIED",
+            "alert": "Model is not present in the trusted registry.",
+        }
 
 if __name__ == "__main__":
     registry = TyposquatRegistry()
