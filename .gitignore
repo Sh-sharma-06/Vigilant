@@ -1,9 +1,12 @@
 venv/
+.venv/
+.python-version
 *.log
+*.pt
+*.pth
+*.bin
 *.pkl
 __pycache__/
 logs/*
 !logs/.gitkeep
 final_report.json
-.venv/
-.python-version
