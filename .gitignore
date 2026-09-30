@@ -1,12 +1,21 @@
 venv/
 .venv/
 .python-version
+
 *.log
+
+# Large ML model files
 *.pt
 *.pth
 *.bin
 *.pkl
+
+# Python cache
 __pycache__/
+
+# Logs
 logs/*
 !logs/.gitkeep
+
+# Generated reports
 final_report.json

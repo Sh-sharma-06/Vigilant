@@ -75,25 +75,34 @@ ALLOWLIST = {
     # Standard torch.nn building blocks. These are concrete, reviewed module
     # classes rather than a broad torch.nn wildcard, so custom model classes
     # still require review.
+    "torch.nn.parameter.Parameter",
+    "torch.nn.modules.module.Module",
     "torch.nn.modules.container.Sequential",
+    "torch.nn.modules.container.ModuleList",
+    "torch.nn.modules.container.ModuleDict",
     "torch.nn.modules.linear.Linear",
+    "torch.nn.modules.linear.Identity",
     "torch.nn.modules.conv.Conv1d",
     "torch.nn.modules.conv.Conv2d",
     "torch.nn.modules.conv.Conv3d",
-    "torch.nn.modules.batchnorm.BatchNorm1d",
-    "torch.nn.modules.batchnorm.BatchNorm2d",
-    "torch.nn.modules.batchnorm.BatchNorm3d",
     "torch.nn.modules.activation.ReLU",
     "torch.nn.modules.activation.GELU",
     "torch.nn.modules.activation.Sigmoid",
+    "torch.nn.modules.activation.Softmax",
     "torch.nn.modules.activation.Tanh",
     "torch.nn.modules.dropout.Dropout",
+    "torch.nn.modules.normalization.LayerNorm",
+    "torch.nn.modules.batchnorm.BatchNorm1d",
+    "torch.nn.modules.batchnorm.BatchNorm2d",
+    "torch.nn.modules.batchnorm.BatchNorm3d",
     "torch.nn.modules.pooling.MaxPool1d",
     "torch.nn.modules.pooling.MaxPool2d",
     "torch.nn.modules.pooling.MaxPool3d",
     "torch.nn.modules.pooling.AdaptiveAvgPool1d",
     "torch.nn.modules.pooling.AdaptiveAvgPool2d",
     "torch.nn.modules.pooling.AdaptiveAvgPool3d",
+    "torch.nn.modules.sparse.Embedding",
+    "torch.nn.modules.loss.CrossEntropyLoss",
 }
 
 # Opcodes that instantiate or invoke a callable during unpickling. BUILD only
@@ -149,11 +158,33 @@ def _iter_pickle_streams(path: Path):
         yield path.name, path.read_bytes()
 
 
+# Pickle protocol 2 (and lower) writes some stdlib module names using their
+# old Python-2 aliases for cross-version compatibility -- e.g. a plain
+# Python `set` is emitted as GLOBAL '__builtin__ set', not 'builtins set',
+# even when written by Python 3. Without normalizing this, nn.Module's own
+# self._non_persistent_buffers_set (a real, harmless Python set that every
+# torch.save(model, ...) full-model checkpoint contains) shows up as a
+# non-allowlisted target and false-positives the scan. This is a distinct
+# bug from the allowlist-scope decision above -- confirmed against the
+# actual benign_model.pt opcode stream, not assumed.
+_MODULE_ALIASES = {
+    "__builtin__": "builtins",
+}
+
+
 def _target_name(arg) -> str:
     """Normalize the operand of a GLOBAL/STACK_GLOBAL op to 'module.qualname'."""
     if isinstance(arg, tuple):
         return ".".join(str(a) for a in arg)
     return str(arg)
+
+
+def _normalize_target(target: str) -> str:
+    """Apply legacy module-alias normalization to a fully-formed
+    'module.qualname' string (called AFTER any space->dot conversion)."""
+    module, _, rest = target.partition(".")
+    module = _MODULE_ALIASES.get(module, module)
+    return f"{module}.{rest}" if rest else module
 
 
 def scan_stream(label: str, data: bytes) -> dict:
@@ -174,6 +205,7 @@ def scan_stream(label: str, data: bytes) -> dict:
                 # Old-style GLOBAL: pickletools decodes the arg itself as
                 # "module qualname" (space-separated).
                 target = _target_name(arg).replace(" ", ".", 1) if arg else "UNKNOWN"
+                target = _normalize_target(target)
                 referenced_targets.append(target)
                 if target not in ALLOWLIST:
                     findings.append({
@@ -188,6 +220,7 @@ def scan_stream(label: str, data: bytes) -> dict:
                     target = f"{module}.{qualname}"
                 else:
                     target = "UNKNOWN"
+                target = _normalize_target(target)
                 referenced_targets.append(target)
                 if target not in ALLOWLIST:
                     findings.append({
