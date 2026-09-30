@@ -27,6 +27,11 @@ class TyposquatRegistry:
                 expected_hash="89968f5d5b2fc93cd4d4268e00834e192118a50fdc31b541f60618de7296058e",
                 author="Vigilant repository fixture",
             ),
+            "canary_model": RegistryEntry(
+    name="canary_model",
+    expected_hash="ae45c0652eb491283c610b7d42c9dfbcd4bc32b5b25aa1989ef7c4256313bbb7",
+    author="Vigilant repository fixture",
+),
         }
         
     @staticmethod
