@@ -3,6 +3,7 @@
 
 import json
 import sys
+from hardware_logger import log_to_esp32
 from pathlib import Path
 
 from analyzer import analyze_telemetry
@@ -16,6 +17,7 @@ FINAL_REPORT = Path(__file__).resolve().parent / "final_report.json"
 
 def _write_report(report: dict) -> None:
     FINAL_REPORT.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    log_to_esp32(report)   # does nothing unless VIGILANT_ESP32_PORT is set
 
 
 def run_pipeline(model_path: str) -> int:
