@@ -1,3 +1,4 @@
 torch==2.14.0
 requests==2.31.0
 pydantic==2.5.3
+pyserial
