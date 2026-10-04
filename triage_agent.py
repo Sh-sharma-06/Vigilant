@@ -35,7 +35,7 @@ def analyze_telemetry(model_name, terminal_output, strace_log_path):
     suspicious_keywords = [
         "pwned", "traceback", "exception", "error", "drwxrwxrwx", "cat:",
         "httpsconnection", "socket", "operation not permitted", 
-        "pip is being invoked", "stack_global"
+        "pip is being invoked", "stack_global","critical_hook_triggered"
     ]
     
     is_suspicious = any(word in term_lower for word in suspicious_keywords) or ("socket" in strace_lower or "execve" in strace_lower)

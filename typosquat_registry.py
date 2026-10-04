@@ -1,119 +1,76 @@
-import difflib
 import hashlib
-from pathlib import Path
-
-from pydantic import BaseModel
-
-
-class RegistryEntry(BaseModel):
-    name: str
-    expected_hash: str
-    author: str
-
+import json
+import os
+import difflib
 
 class TyposquatRegistry:
-    """
-    SECURITY NOTICE: This registry is itself a poisonable attack surface.
-    It relies on local data integrity and is separate from the model's actual
-    execution behavior or accuracy benchmarking. If an attacker gains write access
-    to this registry, they can whitelist malicious hashes.
-    """
-
     def __init__(self):
-        self.known_models: dict[str, RegistryEntry] = {
-            "gemma:2b": RegistryEntry(
-                name="gemma:2b",
-                expected_hash="b50d6c999e592ae4f79acae23b4feaefbdfceaa7cd366df2610e3072c052a160",
-                author="google",
-            ),
-            "llama3:8b": RegistryEntry(
-                name="llama3:8b",
-                expected_hash="a1b2c3d4...",
-                author="meta",
-            ),
-            "bert-base-uncased": RegistryEntry(
-                name="bert-base-uncased",
-                expected_hash="3f4a5b6c...",
-                author="google",
-            ),
-            "benign_model": RegistryEntry(
-                name="benign_model",
-                expected_hash="89968f5d5b2fc93cd4d4268e00834e192118a50fdc31b541f60618de7296058e",
-                author="Vigilant repository fixture",
-            ),
-            "canary_model": RegistryEntry(
-                name="canary_model",
-                expected_hash="ae45c0652eb491283c610b7d42c9dfbcd4bc32b5b25aa1989ef7c4256313bbb7",
-                author="Vigilant repository fixture",
-            ),
-        }
+        self.known_safe_models = self.load_safe_models()
 
-    @staticmethod
-    def _sha256(filepath: str | Path) -> str:
-        """Hash a candidate model without loading it into memory or executing it."""
-        digest = hashlib.sha256()
-        with Path(filepath).open("rb") as model_file:
-            for block in iter(lambda: model_file.read(1024 * 1024), b""):
-                digest.update(block)
-        return digest.hexdigest()
+    def load_safe_models(self):
+        """Dynamically load trusted models and their SHA-256 hashes from the manifest."""
+        manifest_path = "eval_dataset/manifest.json"
+        safe_models = {}
+        
+        if os.path.exists(manifest_path):
+            with open(manifest_path, "r") as f:
+                data = json.load(f)
+                for entry in data:
+                    safe_models[entry["filename"]] = entry["sha256"]
+                    
+        return safe_models
 
-    def check_model(
-        self,
-        target_name: str,
-        filepath: str | Path | None = None,
-        threshold: float = 0.7,
-    ) -> dict:
-        """Checks exact names and hashes before considering near-miss typosquats."""
+    def compute_sha256(self, filepath):
+        hasher = hashlib.sha256()
+        with open(filepath, "rb") as f:
+            while chunk := f.read(8192 * 1024):
+                hasher.update(chunk)
+        return hasher.hexdigest()
 
-        if target_name in self.known_models:
-            if filepath is None:
-                return {
-                    "status": "REJECT_UNVERIFIED",
-                    "alert": "A registered name is not trusted without a model file hash.",
-                }
+    def check_typosquat(self, filename, threshold=0.8):
+        """
+        Uses Gestalt pattern matching to detect near-miss typosquats against the registry.
+        """
+        for safe_name in self.known_safe_models.keys():
+            similarity = difflib.SequenceMatcher(None, filename, safe_name).ratio()
+            if similarity > threshold and filename != safe_name:
+                return f"WARNING: '{filename}' is suspiciously similar to trusted model '{safe_name}' (Similarity: {similarity:.2f})."
+        return None
 
-            try:
-                actual_hash = self._sha256(filepath)
-            except OSError as e:
-                return {
-                    "status": "REJECT_UNVERIFIED",
-                    "alert": f"Could not hash model file: {e}",
-                }
+    def check_model(self, model_name, filepath):
+        """
+        Validates model integrity. Returns a dictionary status for the pipeline orchestrator.
+        """
+        filepath = str(filepath)
+        filename = os.path.basename(filepath)
+        print(f"[Registry] Checking '{filename}'...")
+        
+        # 1. Gestalt Pattern Matching for Typosquats
+        typosquat_warning = self.check_typosquat(filename)
+        if typosquat_warning:
+            print(f"[Registry] {typosquat_warning}")
+        
+        # 2. Unknown artifact check (Fail-closed)
+        if filename not in self.known_safe_models:
+            reason = f"'{filename}' is not in the trusted registry."
+            print(f"[Registry] REJECTED: {reason}")
+            return {"status": "rejected", "reason": reason}
+            
+        # 3. Hash mismatch check (Fail-closed)
+        actual_hash = self.compute_sha256(filepath)
+        expected_hash = self.known_safe_models[filename]
+        
+        if actual_hash != expected_hash:
+            reason = f"Hash mismatch for '{filename}'!"
+            print(f"[Registry] REJECTED: {reason}")
+            return {"status": "rejected", "reason": reason}
+            
+        print(f"[Registry] PASS: '{filename}' verified successfully.")
+        return {"status": "safe"}
 
-            expected_hash = self.known_models[target_name].expected_hash
-
-            if actual_hash != expected_hash:
-                return {
-                    "status": "REJECT_HASH_MISMATCH",
-                    "alert": "Registered model name does not match its expected SHA-256 hash.",
-                    "expected_hash": expected_hash,
-                    "actual_hash": actual_hash,
-                }
-
-            return {
-                "status": "safe",
-                "match": self.known_models[target_name].model_dump(),
-                "sha256": actual_hash,
-            }
-
-        known_names = list(self.known_models.keys())
-        matches = difflib.get_close_matches(
-            target_name,
-            known_names,
-            n=1,
-            cutoff=threshold,
-        )
-
-        if matches:
-            return {
-                "status": "REJECT_TYPOSQUAT",
-                "alert": f"Potential typosquat detected. Did you mean '{matches[0]}'?",
-                "suggested_safe_alternative": self.known_models[
-                    matches[0]
-                ].model_dump(),
-            }
-
-        return {
-            "status": "REJECT_UNVERIFIED",
-            "alert": "Model is not present in the trusted registry.",
-        }
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1:
+        registry = TyposquatRegistry()
+        name = os.path.splitext(os.path.basename(sys.argv[1]))[0]
+        print(registry.check_model(name, sys.argv[1]))
