@@ -14,8 +14,11 @@ warnings.filterwarnings("ignore", category=UserWarning)
 socket.setdefaulttimeout(1.0) 
 
 # Neutralize the anti-sandbox suicide pills
-sys.exit = lambda code=0: print(f"Blocked attempt to call sys.exit({code})")
-os._exit = lambda code=0: print(f"Blocked attempt to call os._exit({code})")
+def lethal_exit(code=0):
+    raise PermissionError(f"Vigilant Honeypot: Blocked anti-sandbox exit({code})")
+
+sys.exit = lethal_exit
+os._exit = lethal_exit
 
 # ==========================================
 # 2. GHOST CLASS (CUDA SPOOFING ENABLED)
