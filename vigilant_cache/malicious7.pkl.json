@@ -1,0 +1,1 @@
+{"model_name": "malicious7.pkl", "format": "PICKLE", "technical_details": {"honeypot": {"canaries_active": 13, "telemetry_events": 4, "exfiltration_attempts": []}}, "verdict": "MALICIOUS", "confidence": "HIGH", "attack_vector": "CORRUPT_OR_EXPLOIT", "summary": "Sandbox execution crashed: Vigilant Honeypot: Blocked outgoing connection to 20.207.73.82:80"}

@@ -1,0 +1,1 @@
+{"model_name": "27_model_head.pkl", "format": "PICKLE", "technical_details": {"honeypot": {"canaries_active": 13, "telemetry_events": 2, "exfiltration_attempts": []}}, "verdict": "MALICIOUS", "confidence": "HIGH", "attack_vector": "CORRUPT_OR_EXPLOIT", "summary": "Sandbox execution crashed: invalid load key, '\\x01'."}

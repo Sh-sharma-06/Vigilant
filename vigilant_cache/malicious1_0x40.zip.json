@@ -1,0 +1,1 @@
+{"model_name": "malicious1_0x40.zip", "format": "PICKLE", "technical_details": {"honeypot": {"canaries_active": 13, "telemetry_events": 2, "exfiltration_attempts": []}}, "verdict": "MALICIOUS", "confidence": "HIGH", "attack_vector": "CORRUPT_OR_EXPLOIT", "summary": "Sandbox execution crashed: strong encryption (flag bit 6)"}

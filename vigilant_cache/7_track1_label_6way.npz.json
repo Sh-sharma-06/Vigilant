@@ -1,0 +1,1 @@
+{"model_name": "7_track1_label_6way.npz", "format": "PICKLE", "technical_details": {"honeypot": {"canaries_active": 13, "telemetry_events": 2, "exfiltration_attempts": []}}, "verdict": "MALICIOUS", "confidence": "HIGH", "attack_vector": "CORRUPT_OR_EXPLOIT", "summary": "Sandbox execution crashed: Zip file does not contain a .pkl stream"}
