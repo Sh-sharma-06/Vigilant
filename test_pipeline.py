@@ -1,95 +1,96 @@
-import os
 import sys
-import subprocess
-import time
+import os
+import glob
 import json
-from pathlib import Path
+import traceback
 
-# Paths
-BASE_DIR = Path(__file__).resolve().parent
-DATASET_DIR = BASE_DIR / "eval_dataset"
-LOGS_DIR = BASE_DIR / "logs"
-SANDBOX_RUNNER = BASE_DIR / "sandbox_runner.py"
-TRIAGE_AGENT = BASE_DIR / "triage_agent.py"
+# Import the new Vigilant architecture
+import model_dispatcher
+import sandbox_runner
+# If you still use the Gemma LLM agent for backup log analysis on Pickles, 
+# keep this import. Otherwise, it can be safely removed.
+try:
+    import triage_agent
+except ImportError:
+    triage_agent = None
 
-VALID_EXTENSIONS = (".pkl", ".pt", ".bin")
+def evaluate_all_models(dataset_path="eval_dataset"):
+    # Grab all models and sort them so the output is organized
+    test_files = sorted(glob.glob(os.path.join(dataset_path, "*.*")))
+    
+    if not test_files:
+        print(f"[!] No files found in directory: {dataset_path}/")
+        return
 
-def main():
-    if not DATASET_DIR.exists():
-        print(f"[!] Dataset directory not found at: {DATASET_DIR}")
-        sys.exit(1)
+    results = []
+    total = len(test_files)
+    
+    print("="*60)
+    print(f"=== Vigilant End-to-End Pipeline: Scanning {total} Models ===")
+    print("="*60)
 
-    LOGS_DIR.mkdir(exist_ok=True)
-    temp_terminal_file = LOGS_DIR / "temp_terminal.txt"
-
-    model_files = sorted([f for f in DATASET_DIR.iterdir() if f.suffix.lower() in VALID_EXTENSIONS])
-
-    print("=" * 60)
-    print(f"=== Vigilant End-to-End Pipeline: Scanning {len(model_files)} Models ===")
-    print("=" * 60 + "\n")
-
-    results = {"BENIGN": [], "MALICIOUS": [], "UNKNOWN": []}
-
-    for idx, model_path in enumerate(model_files, start=1):
-        print(f"[{idx}/{len(model_files)}] Detonating: {model_path.name}")
+    for i, model_path in enumerate(test_files, 1):
+        filename = os.path.basename(model_path)
+        print(f"\n[{i}/{total}] Detonating: {filename}")
         
-        # 1. Run the Sandbox
-        cmd_sandbox = [sys.executable, str(SANDBOX_RUNNER), str(model_path)]
-        process = subprocess.run(
-            cmd_sandbox,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            check=False
-        )
-        
-        # 2. Save the raw terminal output
-        with open(temp_terminal_file, "w") as f:
-            f.write(process.stdout.strip())
+        try:
+            # ---------------------------------------------------------
+            # THE MAGIC HANDOFF
+            # Dispatcher reads magic bytes and routes to:
+            # 1. Static Scanners (Safetensors, GGUF, ONNX, HDF5)
+            # 2. Dynamic Sandbox (Pickle/PyTorch) + Generative Honeypot
+            # ---------------------------------------------------------
+            report = model_dispatcher.dispatch(
+                model_path, 
+                sandbox_runner=sandbox_runner.run_sandbox 
+            )
             
-        # 3. Trigger Gemma Triage Agent (No capture_output, so it streams live to the screen!)
-        cmd_triage = [sys.executable, str(TRIAGE_AGENT), model_path.name, str(temp_terminal_file)]
-        subprocess.run(cmd_triage)
+            # (Optional) If the dispatcher marked a Pickle BENIGN but we want 
+            # Gemma to double-check the raw stdout logs, you could hook triage_agent here.
+            # For now, we trust the new architecture's verdict.
+            
+            print("\n[+] Analysis Complete! ESP32 Document saved.")
+            print(json.dumps(report, indent=2))
+            results.append(report)
+            
+        except Exception as e:
+            print(f"\n[!] Critical Pipeline Error on {filename}:")
+            traceback.print_exc()
+            
+            # Failsafe report so a crash doesn't halt the whole 76-model loop
+            crash_report = {
+                "model_name": filename,
+                "format": "UNKNOWN",
+                "verdict": "MALICIOUS",
+                "confidence": "HIGH",
+                "attack_vector": "PIPELINE_CRASH",
+                "summary": f"Sandbox or parser crashed during execution: {str(e)}",
+                "technical_details": {}
+            }
+            print(json.dumps(crash_report, indent=2))
+            results.append(crash_report)
         
-        print("-" * 60 + "\n")
-
-        # 4. Read the generated JSON report to tally the verdict
-        report_path = LOGS_DIR / f"{model_path.name}_report.json"
-        if report_path.exists():
-            try:
-                with open(report_path, "r") as f:
-                    report_data = f.read()
-                    
-                    # BUG FIXED: Checking uppercase against uppercase!
-                    data_upper = report_data.upper()
-                    if '"VERDICT": "MALICIOUS"' in data_upper or "**VERDICT:** MALICIOUS" in data_upper:
-                        results["MALICIOUS"].append(model_path.name)
-                    else:
-                        results["BENIGN"].append(model_path.name)
-            except Exception:
-                results["UNKNOWN"].append(model_path.name)
-        else:
-            results["UNKNOWN"].append(model_path.name)
-
-        # Give the OS a half-second to reclaim RAM before spinning up the next Docker container
-        time.sleep(0.5)
-
+        print("-" * 60)
+        
     # ==========================================
-    # 5. PRINT FINAL SUMMARY
+    # FINAL TALLY & SCOREBOARD
     # ==========================================
-    print("=" * 60)
+    # Catch both outright malicious files and suspicious files with broken magic bytes
+    flagged = [r for r in results if r.get("verdict") in ["MALICIOUS", "SUSPICIOUS"]]
+    
+    print("\n" + "="*60)
     print("=== Final Pipeline Evaluation Summary ===")
-    print("=" * 60)
-    print(f"Total Scanned : {len(model_files)}")
-    print(f"Clean (Benign): {len(results['BENIGN'])}")
-    print(f"Flagged/Blocked: {len(results['MALICIOUS'])}")
-    if results["UNKNOWN"]:
-        print(f"Failed to Parse: {len(results['UNKNOWN'])}")
-
-    if results["MALICIOUS"]:
+    print("="*60)
+    print(f"Total Scanned   : {len(results)}")
+    print(f"Clean (Benign)  : {len(results) - len(flagged)}")
+    print(f"Flagged/Blocked : {len(flagged)}")
+    
+    if flagged:
         print("\nFlagged Models:")
-        for name in results["MALICIOUS"]:
-            print(f"  - {name}")
+        for r in flagged:
+            vector = r.get("attack_vector", "UNKNOWN")
+            print(f"  - {r.get('model_name', 'Unknown')} [{vector}]")
 
 if __name__ == "__main__":
-    main()
+    # Point this to wherever your 76 test models are stored
+    evaluate_all_models("eval_dataset")

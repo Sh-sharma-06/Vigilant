@@ -19,3 +19,16 @@ logs/*
 
 # Generated reports
 final_report.json
+# Vigilant Exclusions
+venv/
+__pycache__/
+eval_dataset/
+*.pkl
+*.pt
+*.bin
+*.zip
+*.7z
+*.h5
+*.onnx
+*.safetensors
+*.gguf

@@ -1,35 +1,324 @@
-{
-  "dataset_description": "Evaluation dataset for Vigilant EL project. Contains paired benign and malicious ML models.",
-  "samples": [
+[
     {
-      "filename": "canary_model.pt",
-      "category": "synthetic_safe",
-      "source": "internal",
-      "notes": "Safe trigger testing model. Drops benign marker file."
+        "filename": "10_preprocessor.pkl",
+        "relative_path": "10_preprocessor.pkl",
+        "sha256": "33af7ff8455e8337a053a36e1db59fbd3b2158a56e6eac79d5dc7378c4232b5c",
+        "category": "benign",
+        "source": "huggingface"
     },
     {
-      "filename": "benign_vision_resnet.bin",
-      "category": "vision",
-      "source": "huggingface/hf-internal-testing/tiny-random-resnet",
-      "notes": "Safe, known-benign baseline model"
+        "filename": "11_training_args.bin",
+        "relative_path": "11_training_args.bin",
+        "sha256": "3f4930bf8d86f2ceee199738e85ecc1d86f810c08169d190cfc5351b3db1223b",
+        "category": "benign",
+        "source": "huggingface"
     },
     {
-      "filename": "benign_nlp_bert.bin",
-      "category": "nlp",
-      "source": "huggingface/prajjwal1/bert-tiny",
-      "notes": "Safe, known-benign baseline model"
-      },{
-      "filename": "benign_audio_resnet.pth",
-      "category": "audio",
-      "source": "huggingface/lamtdhe1860336/YOUR_REPO_NAME", 
-      "notes": "Benign ESC-50 audio classification model."
+        "filename": "12_vacuum_model.pth",
+        "relative_path": "12_vacuum_model.pth",
+        "sha256": "5de965ef98e70bcdf1ca5184c4e1eea1769dc0dcc71905a60e4b3e8672ec0344",
+        "category": "benign",
+        "source": "huggingface"
     },
     {
-      "filename": "benign_tts_kokoro.pth",
-      "category": "text-to-speech",
-      "source": "huggingface/author_name/model_name",
-      "notes": "Benign Kokoro TTS model."
+        "filename": "13_config.pkl",
+        "relative_path": "13_config.pkl",
+        "sha256": "27070bc0a0d749b606983e8cde69c9c8e35518775c1231ddbd28362f9f78a681",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "14_rng_state.pth",
+        "relative_path": "14_rng_state.pth",
+        "sha256": "6c320020a0ace51c3f4a7cf3c6f56a3d1dd0674fae61f1db1544dbd74bfc37ce",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "15_training_args.bin",
+        "relative_path": "15_training_args.bin",
+        "sha256": "db91ef57c5d38de6898fc617729ddf27eb84a3d3f4675fcb9c0094e4e90223ff",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "16_food_model.pth",
+        "relative_path": "16_food_model.pth",
+        "sha256": "575c73fce6216bd124f5baa1fcd4489f084c7d490b91c4d6e10cf6178c8619df",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "17_polynomial_regression_model.pkl",
+        "relative_path": "17_polynomial_regression_model.pkl",
+        "sha256": "236ee35593d0849f13d6e747e4f28114f790f6d6a4b6c9ba3ad5bdb2f23d791f",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "18_sam_decoder_finetuned.pth",
+        "relative_path": "18_sam_decoder_finetuned.pth",
+        "sha256": "cea034249a08d2343c40d455160e9cc520e6dc6b706fc1d212400d48c3bab252",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "19_training_args.bin",
+        "relative_path": "19_training_args.bin",
+        "sha256": "6b7a4b18e6dd098bbeba86991ea3a66623c19570bf00ab392b2b8e7e72ee8598",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "1_training_args.bin",
+        "relative_path": "1_training_args.bin",
+        "sha256": "ee1178219233a39de3467c1d1c9ad2fd1d976e51b9ed6bb5a459131607445eaf",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "20_scaler.pkl",
+        "relative_path": "20_scaler.pkl",
+        "sha256": "fc020eda4956d29f92f3d1514d3f43c825339ff04a952e7cdb1ad8d79d8324dc",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "21_scam_model.pkl",
+        "relative_path": "21_scam_model.pkl",
+        "sha256": "812987b4696f34197a7d8552f363a51b30f61a061785a4bca0a2754c5a95883f",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "22_pytorch_model.bin",
+        "relative_path": "22_pytorch_model.bin",
+        "sha256": "a7489eb5ed3ee2217b7d6653de7608bd75115846f2e5e431ac5dc9d2a861f638",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "23_model_checkpoint.pt",
+        "relative_path": "23_model_checkpoint.pt",
+        "sha256": "6683896b059be0983aad183d89bf2756cad290fafe77b684827f578081ceac7d",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "24_classification_heads.pt",
+        "relative_path": "24_classification_heads.pt",
+        "sha256": "384cf8e52b50424136bed9ca3811aa768e55c11255dfabaf11ea29719bf0eed0",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "25_training_args.bin",
+        "relative_path": "25_training_args.bin",
+        "sha256": "5a26a9b1d8d8ae4c6a51c4562616438a77bd81f499d5fd64a8c3601bb1534f12",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "26_training_args.bin",
+        "relative_path": "26_training_args.bin",
+        "sha256": "faf024c35995c1b5bd61eaa1ad4ddbbfca5175a19eb3f2e13c5cb7779bdbc19c",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "27_model_head.pkl",
+        "relative_path": "27_model_head.pkl",
+        "sha256": "90238df50b59d894cc9785c5f84a0d1a47e38772dabf234d9744ab3175f38af7",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "28_stock_xgboost_model.joblib",
+        "relative_path": "28_stock_xgboost_model.joblib",
+        "sha256": "ce62576903f88e4a8eb8c58a0f7bdefe821bbb8c64f348441a24ef70dde20ceb",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "29_pytorch_model.bin",
+        "relative_path": "29_pytorch_model.bin",
+        "sha256": "0cd2286572750ab6f4cf3d1a5283cf6c92b4a8ae9e87f38ebb515439a56c5b53",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "2_training_args.bin",
+        "relative_path": "2_training_args.bin",
+        "sha256": "46c9d76fbeb10875fbe0acfe85321adbbd2a8d8696675373ae0fcca775fa0069",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "30_training_args.bin",
+        "relative_path": "30_training_args.bin",
+        "sha256": "2f6485656c1ab9c9efdd0242386290f520bfcda480aad951f1c25142dc7d21a7",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "31_training_args.bin",
+        "relative_path": "31_training_args.bin",
+        "sha256": "eadb00240214e0e29aee093b60627c1c1d971b3c932b3046b5425f7918785f13",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "32_training_args.bin",
+        "relative_path": "32_training_args.bin",
+        "sha256": "76066cd0b6d86622bd196be200e4bc2f2a8cb61dc8ab55d7ef3d4562ad6a9fba",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "33_training_args.bin",
+        "relative_path": "33_training_args.bin",
+        "sha256": "477aaae337f2ac6e62370fa45b8a05f3d3fd0831cae2e076506075f126686501",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "34_training_args.bin",
+        "relative_path": "34_training_args.bin",
+        "sha256": "8bff6768e302da58ada3e500cc451e66e5438f5449bdf68eccb445b06c315006",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "35_training_args.bin",
+        "relative_path": "35_training_args.bin",
+        "sha256": "fe066a0cf50d5a7010c588f91b4e8f3129cf0b6aa833bc5de7ea5e6d3e8d58e9",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "36_training_args.bin",
+        "relative_path": "36_training_args.bin",
+        "sha256": "2d580001df000aa0ef5c2c63e9066b47fd223dd274ffc9351a1e4e9fcfb772c7",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "37_training_args.bin",
+        "relative_path": "37_training_args.bin",
+        "sha256": "65f97d2bd5ad81fdd447a9e2dbe5ac64effcf30f2ed4763fe28be30c02857ee7",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "38_pytorch_model.bin",
+        "relative_path": "38_pytorch_model.bin",
+        "sha256": "7062dfd1bf63dfeab876189ee2ea1883d9dea9abfa6c3de160dcaf07c1a79e17",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "39_pytorch_model.bin",
+        "relative_path": "39_pytorch_model.bin",
+        "sha256": "684fb8f2ee6e38ab430e77a4e8cd86028c34a150d1251f7d2a624f4de0e8c9c8",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "3_training_args.bin",
+        "relative_path": "3_training_args.bin",
+        "sha256": "31988db98ee351b817a891fd032ef029ace4c43fa46566bea6e2aafc8af9ff2e",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "40_heartbeat-anomaly-detector-model.pt",
+        "relative_path": "40_heartbeat-anomaly-detector-model.pt",
+        "sha256": "f351df03efd74fccb2d06f86c7023949c76f35f6a55417842f69d899f344c75c",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "41_pytorch_model.bin",
+        "relative_path": "41_pytorch_model.bin",
+        "sha256": "8cd2c5c85092cea6435e0a8828ec91f4a081347746d597a6f8e65bc43991b077",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "42_pytorch_model.bin",
+        "relative_path": "42_pytorch_model.bin",
+        "sha256": "4b68c4536633bf10bf12c029a65586ca64d75eaccff15fa95cb939459ea0644d",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "43_pytorch_model.bin",
+        "relative_path": "43_pytorch_model.bin",
+        "sha256": "236cd5573f402648bb36d3185db7ea910ae13a8b9b843152f78ea5417d38d3d2",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "44_pytorch_model.bin",
+        "relative_path": "44_pytorch_model.bin",
+        "sha256": "ee46dc3eaf52d1f65d15a4953f30573526e34031a4c26268fa3867614ef1b65c",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "45_pytorch_model.bin",
+        "relative_path": "45_pytorch_model.bin",
+        "sha256": "adf11598beab117b24348fef68b0fc8dfecc6baf2474bf3ea916650ec3e3ea33",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "47_deeper_50chunks.pt",
+        "relative_path": "47_deeper_50chunks.pt",
+        "sha256": "101c32f02a254a1596617d44a98c9eccbc0f761862232b787ddf31e2b066dc99",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "4_model2.pth",
+        "relative_path": "4_model2.pth",
+        "sha256": "30a534781061f34e83bb9406b4335da4ff2616c95d22a585c1245aa8363e74e0",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "5_asb_action_chas.pt",
+        "relative_path": "5_asb_action_chas.pt",
+        "sha256": "7ffb49be653dadfd31a00acbbc9fdf44643dae0481ac85846c60db8cff04e9a6",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "6_trackers.pickle",
+        "relative_path": "6_trackers.pickle",
+        "sha256": "b989cef1d90e0db2340aa20b0e56539896ca6ffde3ff04ad65fa6ac7f38592c1",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "7_track1_label_6way.npz",
+        "relative_path": "7_track1_label_6way.npz",
+        "sha256": "de32c0b35ac9fecbe96a4db928ab57cd52d1b5188c31687d7b2031716eef1d51",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "8_trm.pt",
+        "relative_path": "8_trm.pt",
+        "sha256": "4b167700038a5b77f236e6f8a77171bc48f929f61041c76f5a7de4984bab1bdd",
+        "category": "benign",
+        "source": "huggingface"
+    },
+    {
+        "filename": "9_best_seed2024.pt",
+        "relative_path": "9_best_seed2024.pt",
+        "sha256": "516c7b9e76ce8a2a26cf2cced8d2747ed37cd883c39bb43b294bc00352cc19ac",
+        "category": "benign",
+        "source": "huggingface"
     }
-    
-  ]
-}
+]

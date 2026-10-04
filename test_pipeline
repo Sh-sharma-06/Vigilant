@@ -1,0 +1,85 @@
+import os
+import sys
+import subprocess
+from pathlib import Path
+
+# Paths
+BASE_DIR = Path(__file__).resolve().parent
+DATASET_DIR = BASE_DIR / "eval_dataset"
+SANDBOX_RUNNER = BASE_DIR / "sandbox_runner.py"
+
+VALID_EXTENSIONS = (".pkl", ".pt", ".bin")
+
+
+def main():
+    if not DATASET_DIR.exists():
+        print(f"[!] Dataset directory not found at: {DATASET_DIR}")
+        sys.exit(1)
+
+    # Collect all valid model files
+    model_files = sorted(
+        [f for f in DATASET_DIR.iterdir() if f.suffix.lower() in VALID_EXTENSIONS]
+    )
+
+    if not model_files:
+        print(f"[!] No models with extensions {VALID_EXTENSIONS} found in {DATASET_DIR}")
+        sys.exit(1)
+
+    print("=" * 60)
+    print(f"=== Vigilant Pipeline: Scanning {len(model_files)} Target Models ===")
+    print("=" * 60 + "\n")
+
+    results = {"PASSED": [], "ALERTED": [], "ERROR": []}
+
+    for idx, model_path in enumerate(model_files, start=1):
+        print(f"[{idx}/{len(model_files)}] Testing: {model_path.name}")
+        print("-" * 50)
+
+        cmd = [sys.executable, str(SANDBOX_RUNNER), str(model_path)]
+
+        try:
+            # Execute sandbox runner and stream output directly to terminal
+            process = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False
+            )
+
+            # Print output from sandbox runner
+            print(process.stdout.strip())
+
+            if process.returncode == 0:
+                results["PASSED"].append(model_path.name)
+                print(f"--> [PASS] {model_path.name}\n")
+            else:
+                results["ALERTED"].append(model_path.name)
+                print(f"--> [FLAGGED / BLOCKED] (Exit Code {process.returncode})\n")
+
+        except Exception as e:
+            results["ERROR"].append((model_path.name, str(e)))
+            print(f"--> [ERROR] Failed to run test: {e}\n")
+
+    # Final summary display
+    print("=" * 60)
+    print("=== Final Pipeline Evaluation Summary ===")
+    print("=" * 60)
+    print(f"Total Scanned : {len(model_files)}")
+    print(f"Clean / Passed: {len(results['PASSED'])}")
+    print(f"Flagged/Blocked: {len(results['ALERTED'])}")
+    print(f"Execution Errs: {len(results['ERROR'])}")
+
+    if results["ALERTED"]:
+        print("\nFlagged Models:")
+        for name in results["ALERTED"]:
+            print(f"  - {name}")
+
+    if results["ERROR"]:
+        print("\nErrors Encountered:")
+        for name, err in results["ERROR"]:
+            print(f"  - {name}: {err}")
+
+
+if __name__ == "__main__":
+    main()
