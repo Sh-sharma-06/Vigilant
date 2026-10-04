@@ -1,0 +1,1 @@
+{"model_name": "malicious16.pkl", "format": "UNKNOWN", "verdict": "SUSPICIOUS", "confidence": "LOW", "attack_vector": "NONE", "summary": "Unrecognized magic bytes; no inspector available.", "technical_details": {}}

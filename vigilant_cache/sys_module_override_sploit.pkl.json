@@ -1,0 +1,1 @@
+{"model_name": "sys_module_override_sploit.pkl", "format": "PICKLE", "technical_details": {"honeypot": {"canaries_active": 13, "telemetry_events": 2, "exfiltration_attempts": []}}, "verdict": "MALICIOUS", "confidence": "HIGH", "attack_vector": "CORRUPT_OR_EXPLOIT", "summary": "Sandbox execution crashed: STACK_GLOBAL requires str"}
