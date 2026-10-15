@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-import csv, json, math, subprocess, sys, time
+import csv
+import os, json, math, subprocess, sys, time
 from collections import defaultdict
 
 TIMEOUT = 300  # seconds per file
+OUT_SUFFIX = ""  # set from the command line when only one tool is run
 
 
 def v_picklescan(rc, out, err):
@@ -46,7 +48,7 @@ def v_vig_strict(rc, out, err):
 def v_vig_lenient(rc, out, err):
     return _vig(out) == "MALICIOUS"
 
-VIG = lambda f: ["./venv/bin/python", "vigilant_one.py", f]
+VIG = lambda f: [sys.executable, "vigilant_one.py", f]   # same python that runs the harness
 TOOLS = {
     "picklescan": (lambda f: ["picklescan", "-p", f], v_picklescan),
     "modelscan":  (lambda f: ["modelscan", "-p", f], v_modelscan),
@@ -76,6 +78,12 @@ def main(labels_path):
     with open(labels_path) as f:
         rows = list(csv.DictReader(f))
 
+    # Pre-flight: refuse to run if the files named in labels.csv are not here.
+    missing = [r["file"] for r in rows if not os.path.exists(r["file"])]
+    if missing:
+        sys.exit(f"ABORT: {len(missing)} of {len(rows)} files listed in {labels_path} do not exist "
+                 f"from {os.getcwd()}, e.g. {missing[:3]}. Run from the folder that contains eval_dataset/.")
+
     raw = []
     for tool, (cmd, verdict) in TOOLS.items():
         for r in rows:
@@ -93,11 +101,20 @@ def main(labels_path):
                 "tool": tool, "file": r["file"], "label": r["label"],
                 "category": r.get("category", ""), "flagged": flagged,
                 "exit_code": rc, "seconds": round(elapsed, 3),
-                "error": timed_out or (rc not in (0, 1) and not tool.startswith("vigilant")), "stderr": err.strip()[:300].replace("\n", " "),
+                "error": timed_out or (rc not in (0, 1) and not tool.startswith("vigilant"))
+                         or (tool.startswith("vigilant") and not _vig(out)),   # crash = no verdict, never "benign"
+                "stderr": err.strip()[-600:].replace("\n", " | "),
             })
             print(f"{tool:11s} {r['file']}: flagged={flagged} rc={rc} {elapsed:.2f}s")
 
-    with open("results_raw.csv", "w", newline="") as f:
+    bad = [x for x in raw if x["error"]]
+    if bad:
+        print(f"\n!!! WARNING: {len(bad)} of {len(raw)} runs produced NO verdict (crash or timeout).")
+        print("!!! The recall / false-positive numbers below are NOT detection results.")
+        print(f"!!! first failure: {bad[0]['tool']} {bad[0]['file']} rc={bad[0]['exit_code']}")
+        print(f"!!! stderr (end): {bad[0]['stderr']}\n")
+
+    with open(f"results_raw{OUT_SUFFIX}.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(raw[0].keys()))
         w.writeheader()
         w.writerows(raw)
@@ -127,7 +144,7 @@ def main(labels_path):
         for c, (k, n) in sorted(cats.items()):
             print(f"  [{tool}] {c}: {fmt(k, n)}")
 
-    with open("results_summary.csv", "w", newline="") as f:
+    with open(f"results_summary{OUT_SUFFIX}.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(summary[0].keys()))
         w.writeheader()
         w.writerows(summary)
@@ -138,6 +155,9 @@ def main(labels_path):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        sys.exit("usage: benchmark_harness.py labels.csv")
+    if len(sys.argv) not in (2, 3):
+        sys.exit("usage: benchmark_harness.py labels.csv [tool-name-prefix]")
+    if len(sys.argv) == 3:                      # e.g. "vigilant" -> only the Vigilant rows
+        TOOLS = {k: v for k, v in TOOLS.items() if k.startswith(sys.argv[2])}
+        OUT_SUFFIX = "_" + sys.argv[2]
     main(sys.argv[1])

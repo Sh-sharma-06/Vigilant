@@ -284,7 +284,9 @@ class HoneypotEngine:
         elif event in ("socket.connect", "socket.getaddrinfo"):
             self._log("AUDIT_NETWORK", audit_event=event,
                       args=[str(a) for a in args[:2]])
-        elif event.startswith(("subprocess.", "os.system", "os.exec")):
+        elif event.startswith(("subprocess.", "os.system", "os.exec",
+                               "os.posix_spawn", "os.spawn", "os.fork",
+                               "pty.spawn")):
             self._log("AUDIT_PROCESS", audit_event=event, args=[str(a) for a in args[:2]])
             # ADD THIS LINE: Instantly block the command and trip the sandbox exception
             raise PermissionError(f"Vigilant Honeypot: Blocked OS command execution -> {event}")
