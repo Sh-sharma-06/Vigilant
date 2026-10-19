@@ -6,3 +6,18 @@
 
 # Ignore the virtual environment
 venv/
+
+# Ignore massive model archives and runtime artifacts
+*.zip
+*.7z
+*.pt
+*.pth
+*.bin
+*.onnx
+*.gguf
+*.safetensors
+eval_dataset/
+vigilant_cache/
+venv/
+__pycache__/
+*.log
