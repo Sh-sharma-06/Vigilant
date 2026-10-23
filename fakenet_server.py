@@ -1,74 +1,87 @@
-"""
-Minimal fake-internet sinkhole for the ml-sandbox.
-
-Accepts any incoming TCP connection, logs the source and a preview of
-whatever was sent, and replies with a small well-formed response so a
-program checking its own exit code (e.g. curl) doesn't notice anything
-unusual -- this is what lets us observe a model's outbound *attempt*
-without ever letting it reach the real internet.
-"""
-import socket
-import threading
-import json
-import datetime
+import asyncio
+import logging
 import os
+from datetime import datetime
+from enum import Enum
+from typing import Dict, Optional
 
-LISTEN_HOST = "0.0.0.0"
-LISTEN_PORT = 8080
-LOG_PATH = "/sandbox/fakenet_logs/fakenet_log.jsonl"
+from dnslib import DNSRecord, DNSHeader, RR, A, QTYPE
+from fastapi import FastAPI, Request
+from pydantic import BaseModel, Field
+import uvicorn
 
+class ProtocolEnum(str, Enum):
+    HTTP = "HTTP"
+    DNS = "DNS"
 
-def log_connection(addr, data_preview):
-    os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
-    entry = {
-        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
-        "source_ip": addr[0],
-        "source_port": addr[1],
-        "data_preview": data_preview,
-    }
-    with open(LOG_PATH, "a") as f:
-        f.write(json.dumps(entry) + "\n")
-    print(f"[fakenet] Logged connection from {addr[0]}:{addr[1]}")
+class NetworkEvent(BaseModel):
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    protocol: ProtocolEnum
+    client_ip: str
+    target_host: str
+    request_path: Optional[str] = None
+    method: Optional[str] = None
+    headers: Optional[Dict[str, str]] = None
+    payload_preview: Optional[str] = None
 
+LOG_FILE = "/logs/network_telemetry.json"
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("FakeNet")
 
-def handle_client(conn, addr):
+def log_event(event: NetworkEvent):
     try:
-        conn.settimeout(2)
-        try:
-            data = conn.recv(1024)
-            preview = data.decode(errors="replace")[:200]
-        except socket.timeout:
-            preview = "(no data received before timeout)"
-
-        log_connection(addr, preview)
-
-        # Generic, well-formed response so the caller's own error handling
-        # doesn't trip a sandbox-detection heuristic on the malware's side.
-        response = (
-            b"HTTP/1.1 200 OK\r\n"
-            b"Content-Type: text/plain\r\n"
-            b"Content-Length: 2\r\n"
-            b"\r\n"
-            b"OK"
-        )
-        conn.sendall(response)
+        with open(LOG_FILE, "a") as f:
+            f.write(event.model_dump_json() + "\n")
     except Exception as e:
-        print(f"[fakenet] Error handling {addr}: {e}")
+        logger.error(f"Failed to log telemetry: {e}")
+
+app = FastAPI(title="Vigilant FakeNet Sinkhole")
+
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+async def catch_all(request: Request, path: str):
+    body = await request.body()
+    query_str = f"?{request.url.query}" if request.url.query else ""
+    log_event(NetworkEvent(
+        protocol=ProtocolEnum.HTTP,
+        client_ip=request.client.host if request.client else "unknown",
+        target_host=request.headers.get("host", "unknown"),
+        request_path=f"/{path}{query_str}",
+        method=request.method,
+        headers=dict(request.headers),
+        payload_preview=body[:500].decode(errors="replace") if body else None
+    ))
+    return {"status": "ok", "sinkhole": "vigilant-fakenet"}
+
+class DNSSinkhole(asyncio.DatagramProtocol):
+    def connection_made(self, transport):
+        self.transport = transport
+
+    def datagram_received(self, data, addr):
+        try:
+            request = DNSRecord.parse(data)
+            reply = DNSRecord(DNSHeader(id=request.header.id, qr=1, aa=1, ra=1), q=request.q)
+            qname = str(request.q.qname).rstrip('.')
+            qtype = request.q.qtype
+
+            # Return 172.20.0.2 for IPv4 (A); return empty NOERROR for IPv6 (AAAA) so glibc uses IPv4 in 1ms!
+            if qtype == QTYPE.A:
+                reply.add_answer(RR(request.q.qname, QTYPE.A, rdata=A("172.20.0.2"), ttl=60))
+                log_event(NetworkEvent(protocol=ProtocolEnum.DNS, client_ip=addr[0], target_host=qname))
+
+            self.transport.sendto(reply.pack(), addr)
+        except Exception as e:
+            logger.error(f"DNS error: {e}")
+
+async def main():
+    os.makedirs("/logs", exist_ok=True)
+    loop = asyncio.get_running_loop()
+    transport, _ = await loop.create_datagram_endpoint(lambda: DNSSinkhole(), local_addr=('0.0.0.0', 53))
+    config = uvicorn.Config(app=app, host="0.0.0.0", port=80, loop="asyncio")
+    server = uvicorn.Server(config)
+    try:
+        await server.serve()
     finally:
-        conn.close()
-
-
-def main():
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind((LISTEN_HOST, LISTEN_PORT))
-    server.listen(20)
-    print(f"[fakenet] Sinkhole listening on {LISTEN_HOST}:{LISTEN_PORT}")
-
-    while True:
-        conn, addr = server.accept()
-        threading.Thread(target=handle_client, args=(conn, addr), daemon=True).start()
-
+        transport.close()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

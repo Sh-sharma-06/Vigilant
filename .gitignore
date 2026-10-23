@@ -21,3 +21,23 @@ vigilant_cache/
 venv/
 __pycache__/
 *.log
+
+# Virtual environments & caches
+.venv/
+pwned/
+venv/
+__pycache__/
+*.pyc
+
+# Evaluation datasets & runtime logs
+eval_dataset/
+logs/
+*.pt
+*.pth
+*.bin
+*.pkl
+*.pickle
+*.onnx
+*.h5
+*.7z
+*.zip
