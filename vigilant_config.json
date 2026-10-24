@@ -3,7 +3,7 @@
   "memory": "2g",
   "cpus": "2",
   "pids_limit": 256,
-  "timeout_seconds": 120,
+  "timeout_seconds": 600,
   "sessions": 7,
   "cache_dir": "vigilant_scan_cache",
   "terminated_is_malicious": false

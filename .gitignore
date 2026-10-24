@@ -38,3 +38,7 @@ vigilant_scan_cache/
 # Generated runtime cache
 vigilant_cache/
 vigilant_cache/
+
+malhug_test/
+malhug_result.zip
+malhug_results.json
