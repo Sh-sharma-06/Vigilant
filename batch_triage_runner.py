@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Hash and statically profile local models; delegate execution to a Docker dispatcher."""
+"""Hash, assign deterministic dev/test split, sanitize hostile strings, and evaluate models."""
 import argparse
 import hashlib
+import html
 import importlib
 import io
 import json
@@ -14,13 +15,27 @@ import time
 import zipfile
 
 from container_dispatcher import strip_zip_encryption_bits
-from train_model import score_model_telemetry
+from inspectors.multi_format_scanner import identify_format
 
 MAX_STATIC_BYTES = 32 * 1024 * 1024
+MAX_STRING_LEN = 160
+MAX_TOKEN_LIST = 100
+
 SUPPORTED_EXTENSIONS = {
     '.pkl', '.pickle', '.pt', '.pth', '.bin', '.ckpt', '.joblib', '.npz',
     '.zip', '.7z', '.onnx', '.h5', '.keras', '.gguf', '.safetensors'
 }
+
+def sanitize_hostile_str(val: str, max_len: int = MAX_STRING_LEN) -> str:
+    """Treat all model strings/class names as hostile attacker input."""
+    if not isinstance(val, str):
+        val = str(val)
+    cleaned = "".join(ch if ch.isprintable() else "?" for ch in val[:max_len])
+    return html.escape(cleaned, quote=True)
+
+def assign_deterministic_split(sample_id: str) -> str:
+    """Deterministic 80% dev / 20% test split locked by SHA-256 hash."""
+    return "test" if (int(sample_id[:8], 16) % 5 == 0) else "dev"
 
 def sha256_file(path):
     digest = hashlib.sha256()
@@ -45,9 +60,9 @@ def profile_pickle(payload):
         for op, arg, pos in pickletools.genops(payload):
             counts[op.name] = counts.get(op.name, 0) + 1
             if op.name == 'GLOBAL':
-                globals_.append(str(arg).replace(' ', '.'))
+                globals_.append(sanitize_hostile_str(str(arg).replace(' ', '.')))
             if op.name in ('UNICODE', 'BINUNICODE', 'SHORT_BINUNICODE', 'BINUNICODE8'):
-                strings.append(str(arg))
+                strings.append(str(arg)[:MAX_STRING_LEN])
             elif op.name in ('BINPUT', 'LONG_BINPUT', 'PUT') and strings:
                 try:
                     memo[int(arg)] = strings[-1]
@@ -62,13 +77,13 @@ def profile_pickle(payload):
                 except Exception:
                     pass
             elif op.name == 'STACK_GLOBAL' and len(strings) >= 2:
-                stack_globals.append('.'.join(strings[-2:]))
+                stack_globals.append(sanitize_hostile_str('.'.join(strings[-2:])))
                 strings = []
     except Exception as exc:
         partial = type(exc).__name__
     return dict(
-        globals=sorted(set(globals_)),
-        stack_globals=sorted(set(stack_globals)),
+        globals=sorted(set(globals_))[:MAX_TOKEN_LIST],
+        stack_globals=sorted(set(stack_globals))[:MAX_TOKEN_LIST],
         op_counts=counts,
         partial_parse_error=partial,
     )
@@ -90,7 +105,7 @@ def extract_features(path: Path):
                     if info.is_dir():
                         continue
                     if info.file_size > budget:
-                        features['extraction_notes'].append('Static extraction budget exceeded: ' + info.filename)
+                        features['extraction_notes'].append('Static extraction budget exceeded')
                         continue
                     try:
                         with archive.open(info) as stream:
@@ -115,8 +130,6 @@ def extract_features(path: Path):
         else:
             with open(path, 'rb') as stream:
                 payloads.append(stream.read(MAX_STATIC_BYTES))
-            if path.stat().st_size > MAX_STATIC_BYTES:
-                features['extraction_notes'].append('Static profile limited to first 32 MB.')
     except Exception as exc:
         features['extraction_notes'].append(f'Archive structural anomaly: {type(exc).__name__}')
 
@@ -127,21 +140,10 @@ def extract_features(path: Path):
         for op, count in result['op_counts'].items():
             features['op_counts'][op] = features['op_counts'].get(op, 0) + count
         if result['partial_parse_error']:
-            features['extraction_notes'].append('Partial pickle profile: ' + result['partial_parse_error'])
+            features['extraction_notes'].append('Partial pickle profile: ' + sanitize_hostile_str(result['partial_parse_error']))
 
-    features['globals'] = sorted(set(features['globals']))
-    features['stack_globals'] = sorted(set(features['stack_globals']))
-
-    # Attach XGBoost & 15-dim DFG/Entropy Telemetry for the WebApp Dashboard
-    try:
-        ml_telemetry = score_model_telemetry(str(path))
-        features['xgboost_malicious_probability'] = ml_telemetry['xgboost_malicious_probability']
-        features['isolation_forest_normality'] = ml_telemetry['isolation_forest_normality']
-        features['deviating_features'] = ml_telemetry['deviating_features']
-        features['dfg_entropy_vector'] = ml_telemetry['raw_features']
-    except Exception:
-        pass
-
+    features['globals'] = sorted(set(features['globals']))[:MAX_TOKEN_LIST]
+    features['stack_globals'] = sorted(set(features['stack_globals']))[:MAX_TOKEN_LIST]
     return features
 
 def _worker(path, pipe):
@@ -158,7 +160,7 @@ def _worker(path, pipe):
             result['error'] = None
         pipe.send(result)
     except Exception as exc:
-        pipe.send(dict(verdict='ERROR', confidence='LOW', summary=str(exc), error=type(exc).__name__))
+        pipe.send(dict(verdict='ERROR', confidence='LOW', summary=sanitize_hostile_str(str(exc)), error=type(exc).__name__))
     finally:
         pipe.close()
 
@@ -192,13 +194,32 @@ def infer_expected_label(filename: str, cli_expected: str) -> str:
         return 'MALICIOUS'
     return 'BENIGN'
 
-def evaluate(path: Path, expected: str, commit: str, timeout: float):
+def infer_provenance(filename: str, cli_prov: str) -> str:
+    if cli_prov != 'auto':
+        return cli_prov
+    fname = filename.lower()
+    if fname.startswith('malhug_'):
+        return 'in-the-wild'
+    if fname.startswith('hf_'):
+        return 'hf-production'
+    if any(fname.startswith(p) for p in ('malicious_', 'benign_')):
+        return 'scanner-fixture'
+    return 'own-synthetic'
+
+def evaluate(path: Path, expected: str, provenance: str, commit: str, timeout: float):
     started = time.monotonic()
     sample_id = sha256_file(path)
+    split = assign_deterministic_split(sample_id)
     resolved_expected = infer_expected_label(path.name, expected)
+    resolved_prov = infer_provenance(path.name, provenance)
+    true_fmt = identify_format(str(path))
+
     record = dict(
         sample_id=sample_id,
-        model_name=path.name,
+        model_name=sanitize_hostile_str(path.name, 120),
+        format=true_fmt,
+        split=split,
+        provenance=resolved_prov,
         git_commit=commit,
         expected=resolved_expected,
         verdict='ERROR',
@@ -212,11 +233,12 @@ def evaluate(path: Path, expected: str, commit: str, timeout: float):
         result = detonate(path, timeout)
         if result.get('verdict') not in ('MALICIOUS', 'BENIGN', 'SUSPICIOUS', 'ERROR', 'TIMEOUT'):
             raise ValueError(f"Invalid dispatcher verdict: {result.get('verdict')}")
-        record.update({key: result[key] for key in ('verdict', 'confidence', 'summary', 'error') if key in result})
-        if record['confidence'] not in ('HIGH', 'MEDIUM', 'LOW'):
-            record['confidence'] = 'HIGH'
+        record['verdict'] = result['verdict']
+        record['confidence'] = result.get('confidence', 'HIGH') if result.get('confidence') in ('HIGH', 'MEDIUM', 'LOW') else 'HIGH'
+        record['summary'] = sanitize_hostile_str(result.get('summary', ''), 280)
+        record['error'] = sanitize_hostile_str(result['error'], 120) if result.get('error') else None
     except Exception as exc:
-        record.update(verdict='ERROR', summary=str(exc), error=type(exc).__name__)
+        record.update(verdict='ERROR', summary=sanitize_hostile_str(str(exc), 200), error=type(exc).__name__)
     record['latency_s'] = round(time.monotonic() - started, 6)
     return record
 
@@ -224,6 +246,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('directory', type=Path)
     parser.add_argument('--expected', choices=['BENIGN', 'MALICIOUS', 'UNKNOWN', 'AUTO'], default='AUTO')
+    parser.add_argument('--provenance', choices=['auto', 'in-the-wild', 'hf-production', 'scanner-fixture', 'own-synthetic', 'red-team'], default='auto')
     parser.add_argument('--output', type=Path, default=Path('telemetry.jsonl'))
     parser.add_argument('--timeout', type=float, default=15)
     parser.add_argument('--resume', action='store_true')
@@ -252,11 +275,11 @@ def main():
             try:
                 if args.resume and sha256_file(path) in seen:
                     continue
-                record = evaluate(path, args.expected, commit, args.timeout)
+                record = evaluate(path, args.expected, args.provenance, commit, args.timeout)
                 out.write(json.dumps(record) + '\n')
                 out.flush()
                 os.fsync(out.fileno())
-                print(f"{record['verdict']:10} | {record['confidence']:6} | {record['latency_s']:6.3f}s | {path.name}")
+                print(f"[{record['split'].upper():4}] {record['verdict']:10} | {record['format']:11} | {record['provenance']:15} | {path.name}")
             except OSError as exc:
                 print(f'Cannot read {path.name}: {type(exc).__name__}')
 
