@@ -1,58 +1,32 @@
-import sys
-import json
-import os
+"""Pure metadata analysis. Never load or execute model artifacts."""
+from collections import Counter
 
-def analyze_telemetry(parsed_data):
-    score = 0
-    reasons = []
+def classify(record):
+    verdict, expected = record.get('verdict'), record.get('expected', record.get('expected_label'))
+    if verdict == 'ERROR': return 'ERR'
+    if verdict == 'TIMEOUT': return 'TIMEOUT'
+    if expected == 'MALICIOUS': return 'TP' if verdict == 'MALICIOUS' else 'FN'
+    if expected == 'BENIGN':
+        if verdict == 'MALICIOUS': return 'FP'
+        if verdict == 'BENIGN': return 'TN'
+    return 'UNKNOWN'
 
-    # 1. Process Check (Exact basename matching)
-    for proc in parsed_data.get("processes", []):
-        binary = proc.get("binary", "")
-        cmd = proc.get("command", "").lower()
-        basename = os.path.basename(binary).lower()
-        
-        # Exact match for shells
-        if basename in {"sh", "bash", "dash", "zsh"}:
-            score += 50
-            reasons.append(f"Spawned shell: {binary}")
-            
-        # Flag clear exfiltration/downloaders 
-        if "curl " in cmd or "wget " in cmd:
-            score += 40
-            reasons.append(f"Potential exfiltration command: {cmd}")
+def compute_confusion_matrix(records):
+    counts = {key: 0 for key in ('TP', 'TN', 'FP', 'FN', 'ERR', 'TIMEOUT', 'UNKNOWN')}
+    for record in records: counts[classify(record)] += 1
+    total = sum(counts.values()) or 1
+    counts['dropout_rate'] = round((counts['ERR'] + counts['TIMEOUT']) / total, 4)
+    return counts
 
-    # 2. File I/O Check
-    for file_path in parsed_data.get("files_written", []):
-        if file_path.startswith("/tmp/") or file_path.startswith("/etc/") or file_path.startswith("/root/"):
-            score += 30
-            reasons.append(f"Suspicious file write: {file_path}")
-
-    # 3. Network Check (Known Limitation: Needs Domain Allowlist)
-    for conn in parsed_data.get("network_connections", []):
-        ip = conn.get("destination_ip")
-        # TODO: Implement Phase 4 Category-Based Domain Allowlist (e.g., huggingface.co IPs)
-        # Currently flagging all external IPs equally as a baseline constraint.
-        if ip not in ["127.0.0.1", "0.0.0.0"]:
-            score += 50
-            reasons.append(f"External network connection: {ip}:{conn.get('port')}")
-
-    score = min(score, 100)
-    verdict = "MALICIOUS" if score >= 60 else "BENIGN"
-
-    return {
-        "verdict": verdict,
-        "risk_score": score,
-        "flags": reasons
-    }
-
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python3 analyzer.py <parsed_telemetry.json>")
-        sys.exit(1)
-        
-    with open(sys.argv[1], 'r') as f:
-        data = json.load(f)
-        
-    result = analyze_telemetry(data)
-    print(json.dumps(result, indent=2))
+def cluster_failure_signatures(records):
+    counts = Counter()
+    for record in records:
+        outcome = classify(record)
+        if outcome not in ('FP', 'FN'): continue
+        features = record.get('features') or {}
+        tokens = set(features.get('globals', []) + features.get('stack_globals', []))
+        for token in tokens or {'archive / unknown signature'}: counts[outcome, token] += 1
+    return [dict(outcome=outcome, token=token, count=count, recommendation=(
+        'Review safe import context before adjusting the allowlist.' if outcome == 'FP'
+        else 'Review execution traces and add a targeted detection signature.'))
+        for (outcome, token), count in counts.most_common()]

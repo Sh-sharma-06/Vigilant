@@ -246,6 +246,44 @@ def static_bytecode_scan(model_path):
     return False, None
 
 def detonate_in_container(model_path):
+    filename = os.path.basename(model_path)
+    from inspectors.multi_format_scanner import (
+        identify_format,
+        scan_hdf5,
+        scan_onnx,
+        scan_gguf,
+        scan_safetensors,
+    )
+    true_fmt = identify_format(model_path)
+
+    # Stage 0: Multi-Format AST & Structural Verification (HDF5, ONNX, GGUF, SAFETENSORS)
+    if true_fmt in ("HDF5", "ONNX", "GGUF", "SAFETENSORS"):
+        scanner_map = {
+            "HDF5": scan_hdf5,
+            "ONNX": scan_onnx,
+            "GGUF": scan_gguf,
+            "SAFETENSORS": scan_safetensors,
+        }
+        mf_res = scanner_map[true_fmt](model_path)
+        if mf_res.get("is_malicious"):
+            reasons_str = "; ".join(mf_res.get("reasons", ["Structural AST violation"]))
+            return {
+                "model_name": filename,
+                "format": true_fmt,
+                "verdict": "MALICIOUS",
+                "confidence": "HIGH",
+                "summary": f"Static {true_fmt} AST Scanner: {reasons_str}",
+                "error": None,
+            }
+        return {
+            "model_name": filename,
+            "format": true_fmt,
+            "verdict": "BENIGN",
+            "confidence": "HIGH",
+            "summary": f"Verified clean {true_fmt} structural graph & tensor bounds.",
+            "error": None,
+        }
+
     abs_path = os.path.abspath(model_path)
     filename = os.path.basename(model_path)
     repo_root = os.path.dirname(os.path.abspath(__file__))
@@ -265,7 +303,7 @@ def detonate_in_container(model_path):
                 scanner_map = {"HDF5": scan_hdf5, "ONNX": scan_onnx, "SAFETENSORS": scan_safetensors, "GGUF": scan_gguf}
                 is_mal, reason, _ = scanner_map[detected_format](abs_path)
                 if is_mal:
-                    return {"model_name": filename, "format": detected_format, "verdict": "MALICIOUS", "summary": reason}
+                    return {"model_name": filename, "format": detected_format, "verdict": "MALICIOUS", "confidence": "HIGH", "summary": reason, "error": None}
         except Exception:
             pass
 
@@ -286,7 +324,7 @@ def detonate_in_container(model_path):
                 pass
 
         if is_malicious:
-            return {"model_name": filename, "format": detected_format, "verdict": "MALICIOUS", "summary": reason}
+            return {"model_name": filename, "format": detected_format, "verdict": "MALICIOUS", "confidence": "HIGH", "summary": reason, "error": None}
 
     scanner_script = os.path.join(repo_root, "internal_scanner.py")
 
