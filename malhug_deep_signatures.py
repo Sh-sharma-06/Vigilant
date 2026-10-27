@@ -1,12 +1,13 @@
 """
-Vigilant v2 — Structural Deep Signatures (Zero Filename Overfitting)
+Vigilant v2.3 — Structural Deep Signatures & Archive Security Gate (Zero Filename Overfitting)
 Covers:
-  1. Keras 3 (.keras ZIP) config.json Lambda layer / bytecode injection
-  2. TensorFlow SavedModel (.zip / .pb) WriteFile / PyFunc arbitrary file write
-  3. Cloudpickle / IPython CodeType & PyDev execfile gadget chains
-  4. Nested numpy.load + _io.BytesIO deserialization smuggling
-  5. Multi-stream Pickle trailing payload bypass (tiny PROTO+LONG1+STOP stub with >1KB trailing bytes)
-  6. TorchScript (__torch__) archive code inspection & Pickle DUP stack-amplification bombs
+  1. ZIP-Slip Path Traversal (../ or absolute paths) & Decompression Bomb Ratio Guards
+  2. Keras 3 (.keras ZIP) config.json Lambda layer / bytecode injection
+  3. TensorFlow SavedModel (.zip / .pb) WriteFile / PyFunc arbitrary file write
+  4. TorchScript (__torch__) archive source code inspection
+  5. Cloudpickle / IPython CodeType & PyDev execfile gadget chains
+  6. Nested numpy.load + _io.BytesIO deserialization smuggling
+  7. Legacy Pickle Opcode Evasion (INST, OBJ, EXT1, EXT2, EXT4) & DUP Stack Bombs
 """
 import zipfile
 from typing import Dict, Any
@@ -27,8 +28,24 @@ def inspect_archive_deep(file_path: str) -> Dict[str, Any]:
         if not zipfile.is_zipfile(file_path):
             return {}
         with zipfile.ZipFile(file_path, "r") as zf:
+            # 1. Red-Team Guard: ZIP-Slip (Path Traversal) & Decompression Bomb Ratio
+            for info in zf.infolist():
+                fname = info.filename
+                if ".." in fname or fname.startswith("/") or fname.startswith("\\"):
+                    return {
+                        "verdict": "MALICIOUS",
+                        "confidence": "HIGH",
+                        "summary": f"Archive Security Gate: ZIP-Slip path traversal attempt detected ({fname})"
+                    }
+                if info.compress_size > 0 and (info.file_size / info.compress_size) > 100 and info.file_size > 50 * 1024 * 1024:
+                    return {
+                        "verdict": "MALICIOUS",
+                        "confidence": "HIGH",
+                        "summary": f"Archive Security Gate: Decompression bomb ratio ({info.file_size // info.compress_size}x) in {fname}"
+                    }
+
             names = zf.namelist()
-            # 1. Keras 3 config.json Lambda / bytecode injection
+            # 2. Keras 3 config.json Lambda / bytecode injection
             if "config.json" in names:
                 raw_cfg = zf.read("config.json").decode("utf-8", errors="ignore")
                 if '"class_name": "Lambda"' in raw_cfg or '"Lambda"' in raw_cfg or "function_type" in raw_cfg:
@@ -37,7 +54,7 @@ def inspect_archive_deep(file_path: str) -> Dict[str, Any]:
                         "confidence": "HIGH",
                         "summary": "Keras AST Scanner: Hostile Lambda layer / serialized Python bytecode in config.json"
                     }
-            # 2. TensorFlow SavedModel protobuf WriteFile / PyFunc ops
+            # 3. TensorFlow SavedModel protobuf WriteFile / PyFunc ops & TorchScript code
             for name in names:
                 if name.endswith(".pb"):
                     raw_pb = zf.read(name)
@@ -47,7 +64,6 @@ def inspect_archive_deep(file_path: str) -> Dict[str, Any]:
                             "confidence": "HIGH",
                             "summary": "TensorFlow AST Scanner: Hostile filesystem op (WriteFile/PyFunc) in SavedModel protobuf"
                         }
-                # 3. TorchScript code/__torch__/*.py source code inspection
                 if name.endswith(".py") and ("code/" in name or "__torch__" in name):
                     src = zf.read(name).decode("utf-8", errors="ignore")
                     if any(tok in src for tok in ("os.", "subprocess", "eval(", "exec(", "__import__", "builtins", "open(", "system(")):
@@ -97,13 +113,23 @@ def inspect_structural_features(features: Dict[str, Any]) -> Dict[str, Any]:
             "summary": f"Pickle VM stack-amplification bomb ({op_counts['DUP']} DUP opcodes)"
         }
 
-    # 4. Multi-stream / concatenated pickle trailing-bytes anomaly:
-    # A stub pickle with only {PROTO:1, LONG1:1, STOP:1} is < 32 bytes, yet file is > 50KB with no tensor storage imports
+    # 4. Multi-stream / concatenated pickle trailing-bytes anomaly
     if set(op_counts.keys()) == {"PROTO", "LONG1", "STOP"} and total_size > 50000 and not all_globals:
         return {
             "verdict": "SUSPICIOUS",
             "confidence": "MEDIUM",
             "summary": "Multi-stream pickle anomaly: >50KB unparsed trailing payload after early STOP opcode"
         }
+
+    # 5. Legacy Pickle Opcode Evasion Guard (INST, OBJ, EXT1, EXT2, EXT4)
+    for dangerous_op in ("INST", "OBJ", "EXT1", "EXT2", "EXT4"):
+        if op_counts.get(dangerous_op, 0) > 0 and any(
+            bad in str(all_globals).lower() for bad in ("os", "sys", "posix", "nt", "subprocess", "builtins", "__builtin__")
+        ):
+            return {
+                "verdict": "MALICIOUS",
+                "confidence": "HIGH",
+                "summary": f"Legacy Pickle Opcode Evasion ({dangerous_op}) with restricted module reference"
+            }
 
     return {}
