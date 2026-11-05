@@ -219,7 +219,9 @@ def static_bytecode_scan(model_path):
                 check_zip_bomb(z)
                 for name in z.namelist():
                     try:
-                        member_bytes = z.read(name)
+                        from archive_precheck import RISKY_EXT as _RISKY_EXT, SCAN_CAP as _SCAN_CAP
+                        with z.open(name) as _fh:
+                            member_bytes = _fh.read(-1 if name.lower().endswith(_RISKY_EXT) else _SCAN_CAP)
                     except RuntimeError as re_err:
                         if "encrypted" in str(re_err).lower() or "password" in str(re_err).lower():
                             # General defense against ZIP 0x1 / 0x40 bit-flipping:
@@ -247,6 +249,10 @@ def static_bytecode_scan(model_path):
 
 def detonate_in_container(model_path):
     filename = os.path.basename(model_path)
+    from archive_precheck import archive_precheck as _archive_precheck
+    _pre = _archive_precheck(model_path, filename)
+    if _pre is not None:
+        return _pre
     from inspectors.multi_format_scanner import (
         identify_format,
         scan_hdf5,
