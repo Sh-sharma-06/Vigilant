@@ -61,6 +61,15 @@ ok = True
 for name, build, want in cases:
     p = os.path.join(d, name + ".keras"); build(p)
     r = scan_keras_v3(p)
+    if name in ("harmless_lambda", "evil_lambda"):
+        assert r["contains_executable_code"] is True, f"{name}: expected contains_executable_code=True"
+        assert len(r["lambda_details"]) >= 1, f"{name}: expected at least one lambda_details entry"
+        assert "co_names" in r["lambda_details"][0], f"{name}: lambda_details missing co_names"
+        assert "dis" in r["lambda_details"][0], f"{name}: lambda_details missing dis"
+        assert r["remediation"] != "", f"{name}: expected non-empty remediation"
+    if name in ("clean", "clean_big_weights"):
+        assert r["contains_executable_code"] is False, f"{name}: expected contains_executable_code=False"
+        assert r["remediation"] == "", f"{name}: expected empty remediation"
     good = r["verdict"] == want and classify_zip(p) == "KERAS_V3"
     ok &= good
     print(f"{'PASS' if good else 'FAIL'}  {name:20s} got={r['verdict']:10s} want={want:10s} | {r['reason'][:70]}")

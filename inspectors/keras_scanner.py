@@ -27,7 +27,43 @@ def _lambda_bytes(node):
     return base64.b64decode(code, validate=False)
 
 
-def _walk(o, findings, trail="", depth=0):
+MAX_LAMBDA_MARSHAL_BYTES = 1 << 20   # never unmarshal anything larger than 1 MiB
+
+
+def _lambda_evidence(raw, trail):
+    """Static evidence for a Lambda payload. Never executes the code object."""
+    entry = {"path": trail or "/"}
+    if not raw:
+        entry["error"] = "no code payload"
+        return entry
+    if len(raw) > MAX_LAMBDA_MARSHAL_BYTES:
+        entry["error"] = "payload too large to disassemble"
+        return entry
+    try:
+        import dis, marshal, types
+        code_obj = marshal.loads(raw)
+        names, consts, todo, seen = [], [], [code_obj], 0
+        while todo and seen < 20:
+            co = todo.pop(); seen += 1
+            for n in co.co_names:
+                if n not in names:
+                    names.append(n)
+            for c in co.co_consts:
+                if isinstance(c, types.CodeType):
+                    todo.append(c)
+                else:
+                    consts.append(repr(c)[:80])
+        entry.update(co_names=names[:50], co_consts=consts[:50],
+                     co_varnames=list(code_obj.co_varnames)[:50],
+                     dis=dis.Bytecode(code_obj).dis()[:4000])
+    except Exception as exc:
+        entry["error"] = type(exc).__name__
+    return entry
+
+
+def _walk(o, findings, trail="", depth=0, lambda_details=None):
+    if lambda_details is None:
+        lambda_details = []
     if depth > MAX_DEPTH:
         findings.append(("SUSPICIOUS", f"config nested deeper than {MAX_DEPTH}"))
         return
@@ -38,6 +74,7 @@ def _walk(o, findings, trail="", depth=0):
         if cn == "__lambda__":
             try:
                 raw = _lambda_bytes(o)
+                lambda_details.append(_lambda_evidence(raw, trail))
                 names = {m.decode() for m in IDENT.findall(raw or b"")}
                 hits = sorted(names & DANGEROUS_NAMES)
                 if hits:
@@ -55,10 +92,10 @@ def _walk(o, findings, trail="", depth=0):
         for k, v in o.items():
             if "unsafe" in str(k).lower():
                 findings.append(("SUSPICIOUS", f"unsafe-deserialization key '{k}' at {trail}"))
-            _walk(v, findings, f"{trail}/{k}", depth + 1)
+            _walk(v, findings, f"{trail}/{k}", depth + 1, lambda_details)
     elif isinstance(o, list):
         for i, v in enumerate(o):
-            _walk(v, findings, f"{trail}[{i}]", depth + 1)
+            _walk(v, findings, f"{trail}[{i}]", depth + 1, lambda_details)
 
 
 def _check_weights(zf, name, findings):
@@ -106,14 +143,17 @@ def _check_weights(zf, name, findings):
 def scan_keras_v3(path):
     """Returns {"verdict": CLEAN|SUSPICIOUS|MALICIOUS, "findings": [...], "reason": str}"""
     findings = []
+    lambda_details = []
     try:
         zf = zipfile.ZipFile(path)
     except zipfile.BadZipFile:
-        return {"verdict": "SUSPICIOUS", "findings": [], "reason": "corrupt zip"}
+        return {"verdict": "SUSPICIOUS", "findings": [], "reason": "corrupt zip",
+            "contains_executable_code": False, "lambda_details": [], "remediation": ""}
     with zf:
         infos = zf.infolist()
         if len(infos) > MAX_MEMBERS:
-            return {"verdict": "SUSPICIOUS", "findings": [], "reason": "too many zip members"}
+            return {"verdict": "SUSPICIOUS", "findings": [], "reason": "too many zip members",
+            "contains_executable_code": False, "lambda_details": [], "remediation": ""}
         for i in infos:
             n = i.filename
             if n.startswith(("/", "\\")) or ".." in n.replace("\\", "/").split("/") or ":" in n.split("/")[0]:
@@ -131,15 +171,25 @@ def scan_keras_v3(path):
         elif zf.getinfo("config.json").file_size <= MAX_CONFIG_BYTES:
             try:
                 cfg = json.loads(zf.read("config.json"))
-                _walk(cfg, findings)
+                _walk(cfg, findings, lambda_details=lambda_details)
             except (ValueError, RecursionError):
                 findings.append(("SUSPICIOUS", "config.json unparseable"))
         for n in names:
             if n.endswith((".weights.h5", ".h5")):
                 _check_weights(zf, n, findings)
+    contains_executable_code = any(
+        "Lambda layer at" in msg or "lambda code references" in msg
+        or "embedded lambda code" in msg or "undecodable lambda payload" in msg
+        for _, msg in findings
+    )
+    remediation = ("load with safe_mode=True, or re-save the model without the Lambda layer"
+                   if contains_executable_code else "")
     verdict = max((f[0] for f in findings), key=RANK.get, default="CLEAN")
     reason = "; ".join(f[1] for f in findings[:5]) or "no issues found in Keras archive"
-    return {"verdict": verdict, "findings": findings, "reason": reason}
+    return {"verdict": verdict, "findings": findings, "reason": reason,
+            "contains_executable_code": contains_executable_code,
+            "lambda_details": lambda_details,
+            "remediation": remediation}
 
 
 def classify_zip(path):
