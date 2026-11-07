@@ -1,0 +1,27 @@
+file,label,category
+eval_dataset/EfficientNet/efficientnet_b7_final.keras,benign,keras_hdf5_hf
+eval_dataset/EfficientNet/EfficientNet-B0/oct_outputs_efficientnet_b0-20260703T210328Z-3-001.zip,benign,keras_hdf5_hf
+eval_dataset/EfficientNet/EfficientNet-B0/oct_outputs_featureViz_efficientnet_b0-20260704T113447Z-3-001.zip,benign,keras_hdf5_hf
+eval_dataset/EfficientNet/EfficientNet-B1/oct_outputs_efficientnet_b1-20260714T210258Z-1-001.zip,benign,keras_hdf5_hf
+eval_dataset/EfficientNet/EfficientNet-B1/oct_outputs_featureViz_efficientnet_b1-20260714T210303Z-1-001.zip,benign,keras_hdf5_hf
+eval_dataset/EfficientNet/EfficientNet-B2/Models/efficientnet_b2_final.keras,benign,keras_hdf5_hf
+eval_dataset/EfficientNet/EfficientNet-B3/oct_outputs_efficientnet_b3-20260714T210535Z-1-001.zip,benign,keras_hdf5_hf
+eval_dataset/EfficientNet/EfficientNet-B3/oct_outputs_featureViz_efficientnet_b3-20260714T210537Z-1-001.zip,benign,keras_hdf5_hf
+eval_dataset/EfficientNet/EfficientNet-B4/oct_outputs_efficientnet_b4-20260703T210320Z-3-001.zip,benign,keras_hdf5_hf
+eval_dataset/EfficientNet/EfficientNet-B4/oct_outputs_featureViz_efficientnet_b4-20260704T113544Z-3-001.zip,benign,keras_hdf5_hf
+eval_dataset/EfficientNet/EfficientNet-B5/oct_outputs_efficientnet_b5-20260714T211653Z-1-001.zip,benign,keras_hdf5_hf
+eval_dataset/EfficientNet/EfficientNet-B5/oct_outputs_featureViz_efficientnet_b5-20260714T211652Z-1-001.zip,benign,keras_hdf5_hf
+eval_dataset/EfficientNet/EfficientNet-B6/oct_outputs_efficientnet_b6-20260715T185913Z-1-001.zip,benign,keras_hdf5_hf
+eval_dataset/EfficientNet/EfficientNet-B6/oct_outputs_featureViz_efficientnet_b6-20260715T185915Z-1-001.zip,benign,keras_hdf5_hf
+eval_dataset/EfficientNet/EfficientNet-B7/oct_outputs_efficientnet_b7-20260716T152958Z-1-001.zip,benign,keras_hdf5_hf
+eval_dataset/EfficientNet/EfficientNet-B7/oct_outputs_efficientnet_b7-20260716T152958Z-1-002.zip,benign,keras_hdf5_hf
+eval_dataset/EfficientNet/EfficientNet-B7/oct_outputs_featureViz_efficientnet_b7-20260716T153000Z-1-001.zip,benign,keras_hdf5_hf
+eval_dataset/InverseRUS/cubico_L4.keras,benign,keras_hdf5_hf
+eval_dataset/Plant_Disease/Pretrained_model.h5,benign,keras_hdf5_hf
+eval_dataset/TomatoDiseaseDetector/Leaf Disease/models/tomato_disease_detector_loss-0.2271_acc-63.73.keras,benign,keras_hdf5_hf
+eval_dataset/TomatoDiseaseDetector/Leaf Disease/models/tomato_disease_detector_loss-0.3038_acc-54.93.keras,benign,keras_hdf5_hf
+eval_dataset/TomatoDiseaseDetector/Leaf Disease/models/tomato_disease_detector_loss-0.4242_acc-43.93.keras,benign,keras_hdf5_hf
+eval_dataset/TomatoDiseaseDetector/Leaf Disease/models/tomato_disease_detector_loss-0.6013_acc-78.27.keras,benign,keras_hdf5_hf
+eval_dataset/TomatoDiseaseDetector/Leaf Disease/models/tomato_disease_detector_loss-0.6316_acc-80.33.keras,benign,keras_hdf5_hf
+eval_dataset/TomatoDiseaseDetector/Leaf Disease/models/tomato_disease_detector_loss-0.8962_acc-80.13.keras,benign,keras_hdf5_hf
+eval_dataset/malicious/evil_lambda.keras,malicious,keras_lambda_exploit

@@ -32,3 +32,8 @@ eval_dataset/
 *.onnx
 *.safetensors
 *.gguf
+
+vigilant_cache/
+out/
+vigilant_cache/
+labels_available.csv
