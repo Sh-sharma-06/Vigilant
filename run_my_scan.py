@@ -19,7 +19,24 @@ FORMAT_EXT_MAP = {
     ".gguf": "GGUF",
     ".zip": "ZIP",
     ".7z": "7Z",
+    ".pb": "PROTOTENSOR",
 }
+
+DANGEROUS_OPS = [b"PyFunc", b"PyFuncStateless", b"EagerPyFunc",
+                 b"ReadFile", b"WriteFile", b"MatchingFiles"]
+
+def scan_savedmodel(path):
+    """Crude byte search of saved_model.pb for dangerous op names."""
+    with open(path, "rb") as f:
+        data = f.read()
+    hits = [op.decode() for op in DANGEROUS_OPS if op in data]
+    if hits:
+        return {"verdict": "MALICIOUS", "confidence": "HIGH",
+                "summary": f"dangerous ops: {hits}",
+                "technical_details": {"findings": [{"op": h} for h in hits]}}
+    return {"verdict": "BENIGN", "confidence": "HIGH",
+            "summary": "no dangerous ops found",
+            "technical_details": {"findings": []}}
 
 def sha256_of(path):
     h = hashlib.sha256()
@@ -71,13 +88,14 @@ def main():
     args = ap.parse_args()
 
     out_path = args.out or f"{args.teammate}{args.run_num}.jsonl"
-    exts = tuple(FORMAT_EXT_MAP.keys())
+    exts = tuple(e for e in FORMAT_EXT_MAP.keys() if e != ".pb")
 
     files = []
     for root, dirs, names in os.walk(args.dir):
         dirs[:] = [d for d in dirs if d != ".cache"]
         for name in names:
-            if name.lower().endswith(exts):
+            low = name.lower()
+            if low.endswith(exts) or low == "saved_model.pb":
                 files.append(os.path.join(root, name))
 
     print(f"[*] Found {len(files)} candidate files under {args.dir}")
@@ -87,7 +105,14 @@ def main():
             print(f"[{i}/{len(files)}] Scanning {path} ...")
             sample_id = sha256_of(path)
             size_bytes = os.path.getsize(path)
-            data, elapsed, err = run_dispatcher(path, args.dispatcher)
+            ext = os.path.splitext(path)[1].lower()
+            if ext == ".pb":
+                start = time.time()
+                data = scan_savedmodel(path)
+                elapsed = time.time() - start
+                err = None
+            else:
+                data, elapsed, err = run_dispatcher(path, args.dispatcher)
 
             if data is None:
                 record = {

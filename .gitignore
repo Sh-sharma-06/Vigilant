@@ -37,3 +37,24 @@ vigilant_cache/
 out/
 vigilant_cache/
 labels_available.csv
+
+# Personal telemetry/benchmark/dataset runs - upload to Hub, don't commit
+Shreya*.jsonl
+Shreya*_labels.csv
+bulk_labels.csv
+labels_shreya.csv
+keras_scan_results.json
+results_raw_vigilant.csv
+results_summary_vigilant.csv
+dataset/
+EOFcat >> .gitignore << 'EOF'
+
+# Personal telemetry/benchmark/dataset runs - upload to Hub, don't commit
+Shreya*.jsonl
+Shreya*_labels.csv
+bulk_labels.csv
+labels_shreya.csv
+keras_scan_results.json
+results_raw_vigilant.csv
+results_summary_vigilant.csv
+dataset/
