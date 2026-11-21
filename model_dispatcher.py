@@ -46,6 +46,8 @@ def _parses_as_pickle(path: str, limit: int = 64 * 1024 * 1024) -> bool:
 
 
 def sniff_format(path: str) -> str:
+    if os.path.basename(str(path)).lower() == "saved_model.pb":
+        return "SAVEDMODEL"
     """Identify the container from the first 16 bytes (extension ignored)."""
     with open(path, "rb") as fh:
         head = fh.read(16)
@@ -165,6 +167,23 @@ def dispatch(path: str,
         return scan_hdf5(path)
     if fmt == "GGUF":
         return scan_gguf(path)
+    if fmt == "SAVEDMODEL":
+        from savedmodel_pb_scanner import scan_savedmodel
+        res = scan_savedmodel(str(path))
+        v = str(res.get("verdict", "BENIGN")).upper()
+        verdict = "MALICIOUS" if v == "MALICIOUS" else ("SUSPICIOUS" if v == "SUSPICIOUS" else "BENIGN")
+        return {
+            "verdict": verdict,
+            "confidence": "HIGH",
+            "format": "PROTOTENSOR",
+            "summary": res.get("summary") or ("Dangerous TensorFlow op detected" if verdict != "BENIGN" else "no dangerous ops found"),
+            "features": {
+                "decided_by": "savedmodel_pb_scanner",
+                "protobuf_scan": res,
+                "findings": res.get("findings", []),
+            },
+        }
+
     if fmt == "KERAS":
         from inspectors.keras_scanner import scan_keras_v3
         result = scan_keras_v3(path)
