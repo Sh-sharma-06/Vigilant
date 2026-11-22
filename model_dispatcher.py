@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import pickletools
+import behavior_sim
 from typing import Any, Dict, Optional
 
 from inspectors.safetensors_scanner import scan_safetensors

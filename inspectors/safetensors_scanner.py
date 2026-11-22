@@ -68,6 +68,22 @@ def _looks_like_b64_blob(value: str) -> str:
     return ""
 
 
+def _find_valid_pe(blob: bytes) -> int:
+    """Return offset of a real PE header (MZ + e_lfanew -> PE\x00\x00), or -1."""
+    pos = 0
+    n = len(blob)
+    while True:
+        idx = blob.find(b"MZ", pos)
+        if idx == -1:
+            return -1
+        if idx + 0x40 <= n:
+            (e_lfanew,) = struct.unpack_from("<I", blob, idx + 0x3C)
+            if 0x40 <= e_lfanew <= 0x4000 and idx + e_lfanew + 4 <= n:
+                if blob[idx + e_lfanew : idx + e_lfanew + 4] == b"PE\x00\x00":
+                    return idx
+        pos = idx + 2
+
+
 def scan_safetensors(path: str) -> Dict[str, Any]:
     """Statically inspect a .safetensors file. Returns Vigilant telemetry."""
     name = os.path.basename(path)
@@ -103,7 +119,7 @@ def scan_safetensors(path: str) -> Dict[str, Any]:
                     ("tensor-buffer", data[8 + header_size:]))
     for region, blob in scan_regions:
         for magic, desc in POLYGLOT_MARKERS.items():
-            idx = blob.find(magic)
+            idx = _find_valid_pe(blob) if magic == b"MZ" else blob.find(magic)
             if idx != -1:
                 polyglot_hits.append(f"{desc} marker in {region} @+{idx}")
     if polyglot_hits:
