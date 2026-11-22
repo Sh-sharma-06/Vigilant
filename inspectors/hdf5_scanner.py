@@ -1,181 +1,174 @@
 """
-Vigilant HDF5 / Keras Inspector
-===============================
-Static scanner for Keras `.h5` models using h5py.
-
-Checks:
-  * decompression-bomb heuristics (uncompressed : stored ratio > 20:1)
-  * Keras `Lambda` layers: base64-encoded `marshal` bytecode is extracted
-    and disassembled with `dis`; dangerous global lookups (eval, exec, os,
-    sys, subprocess, import) are flagged as RCE primitives.
+Dual-Engine HDF5 / Legacy Keras (.h5) Security Scanner.
+Works with h5py if installed, OR falls back to a Pure-Python HDF5 Superblock & JSON Metadata Carver.
+Routes any discovered Keras Lambda layers through 3-tier bytecode inspection:
+  - Pure numeric weights -> BENIGN
+  - Benign Lambda (e.g., tf.concat) -> SUSPICIOUS (REVIEW)
+  - Hostile Lambda (os.system, subprocess, eval, exec) -> MALICIOUS
 """
 from __future__ import annotations
-
 import base64
 import dis
-import io
 import json
 import marshal
-import os
-from typing import Any, Dict, List, Set
+import re
+from pathlib import Path
+from typing import Any, Dict, List
 
-FORMAT = "HDF5"
-COMPRESSION_RATIO_LIMIT = 20.0
-DANGEROUS_GLOBALS = {
-    "eval", "exec", "compile", "__import__", "open", "input",
-    "os", "sys", "subprocess", "socket", "shutil", "ctypes",
-    "pickle", "marshal", "builtins", "globals", "getattr", "setattr",
+HDF5_MAGIC = b"\x89HDF\r\n\x1a\n"
+HOSTILE_CALLS = {
+    "system", "popen", "exec", "eval", "compile", "__import__",
+    "Popen", "run", "call", "check_output", "spawn", "urlopen", "socket",
 }
 
 
-def _report(model_name: str, verdict: str, confidence: str, attack_vector: str,
-            summary: str, **details: Any) -> Dict[str, Any]:
-    return {
-        "model_name": model_name, "format": FORMAT, "verdict": verdict,
-        "confidence": confidence, "attack_vector": attack_vector,
-        "summary": summary, "technical_details": details,
-    }
-
-
-def _analyze_lambda_code(encoded: str) -> Dict[str, Any]:
-    """Decode a base64 marshal blob and audit its bytecode."""
-    result: Dict[str, Any] = {"decoded": False, "dangerous_globals": [],
-                              "opcodes_seen": []}
+def _inspect_lambda_bytecode(b64_code: str, layer_name: str, findings: List[Dict[str, Any]]) -> None:
     try:
-        raw = base64.b64decode(encoded)
-        code = marshal.loads(raw)
-    except Exception as exc:
-        result["decode_error"] = str(exc)
-        return result
+        raw = base64.b64decode(b64_code)
+        code_obj = marshal.loads(raw)
+        names = set(getattr(code_obj, "co_names", ()))
+        consts = [str(c) for c in getattr(code_obj, "co_consts", ()) if isinstance(c, str)]
+        hits = sorted(names & HOSTILE_CALLS)
+        if hits:
+            findings.append({
+                "severity": "MALICIOUS",
+                "type": "HDF5_HOSTILE_LAMBDA",
+                "detail": f"Keras Lambda {layer_name!r} invokes hostile symbols: {hits}",
+                "co_names": sorted(names),
+                "co_consts": consts[:10],
+            })
+        else:
+            findings.append({
+                "severity": "SUSPICIOUS",
+                "type": "HDF5_BENIGN_LAMBDA",
+                "detail": f"Keras Lambda {layer_name!r} contains executable bytecode (review recommended)",
+                "co_names": sorted(names),
+                "co_consts": consts[:10],
+            })
+    except Exception as e:
+        findings.append({
+            "severity": "SUSPICIOUS",
+            "type": "HDF5_LAMBDA_UNREADABLE",
+            "detail": f"Keras Lambda {layer_name!r} bytecode could not be disassembled: {e}",
+        })
 
-    result["decoded"] = True
-    names: Set[str] = set()
-    opcodes: Set[str] = set()
 
-    def walk(co) -> None:
-        names.update(co.co_names)
-        for instr in dis.get_instructions(co):
-            opcodes.add(instr.opname)
-        for const in co.co_consts:
-            if hasattr(const, "co_code"):
-                walk(const)
+def _walk_keras_config(obj: Any, findings: List[Dict[str, Any]]) -> None:
+    if isinstance(obj, dict):
+        cls = str(obj.get("class_name", ""))
+        cfg = obj.get("config", {})
+        if cls == "Lambda" and isinstance(cfg, dict):
+            lname = str(cfg.get("name", "lambda"))
+            fn = cfg.get("function")
+            if isinstance(fn, list) and fn and isinstance(fn[0], str):
+                _inspect_lambda_bytecode(fn[0], lname, findings)
+            elif isinstance(fn, str):
+                _inspect_lambda_bytecode(fn, lname, findings)
+            else:
+                findings.append({
+                    "severity": "SUSPICIOUS",
+                    "type": "HDF5_LAMBDA_LAYER",
+                    "detail": f"Keras Lambda layer {lname!r} present in model_config",
+                })
+        for v in obj.values():
+            _walk_keras_config(v, findings)
+    elif isinstance(obj, list):
+        for item in obj:
+            _walk_keras_config(item, findings)
 
-    walk(code)
-    result["opcodes_seen"] = sorted(opcodes)
-    result["dangerous_globals"] = sorted(names & DANGEROUS_GLOBALS)
-    return result
+
+def _carve_model_configs_pure_python(path: Path) -> List[Dict[str, Any]]:
+    """Carves JSON model_config objects from HDF5 metadata without needing h5py."""
+    configs: List[Dict[str, Any]] = []
+    # Read first 8MB + last 2MB where HDF5 root attributes & object headers reside
+    size = path.stat().st_size
+    chunks = []
+    with path.open("rb") as f:
+        chunks.append(f.read(min(size, 8 * 1024 * 1024)))
+        if size > 8 * 1024 * 1024:
+            f.seek(max(0, size - 2 * 1024 * 1024))
+            chunks.append(f.read())
+    blob = b"".join(chunks)
+
+    decoder = json.JSONDecoder()
+    for m in re.finditer(rb'\{"class_name"\s*:\s*"', blob):
+        start = m.start()
+        try:
+            text = blob[start:start + 2 * 1024 * 1024].decode("utf-8", errors="ignore")
+            obj, _ = decoder.raw_decode(text)
+            if isinstance(obj, dict):
+                configs.append(obj)
+        except Exception:
+            continue
+    return configs
 
 
 def scan_hdf5(path: str) -> Dict[str, Any]:
-    """Statically inspect an .h5/.keras HDF5 model. Returns telemetry."""
-    name = os.path.basename(path)
+    p = Path(path)
+    findings: List[Dict[str, Any]] = []
+    engine = "pure_python_carver"
+
     try:
-        import h5py  # type: ignore
-    except ImportError:
-        return _report(name, "SUSPICIOUS", "LOW", "NONE",
-                       "h5py is not installed; HDF5 inspection unavailable.",
-                       error="h5py-missing")
+        with p.open("rb") as f:
+            head = f.read(16)
+        if not head.startswith(HDF5_MAGIC):
+            return {
+                "verdict": "SUSPICIOUS",
+                "confidence": 0.60,
+                "format": "HDF5",
+                "summary": "Invalid HDF5 superblock magic bytes",
+                "findings": [{"severity": "SUSPICIOUS", "type": "HDF5_BAD_MAGIC", "detail": repr(head[:8])}],
+                "features": {"format": "HDF5", "engine": engine},
+            }
 
-    bomb_hits: List[str] = []
-    lambda_findings: List[Dict[str, Any]] = []
-    datasets = 0
-    try:
-        with h5py.File(path, "r") as h5:
-            file_size = os.path.getsize(path)
+        configs: List[Dict[str, Any]] = []
+        try:
+            import h5py  # type: ignore
+            engine = "h5py"
+            with h5py.File(str(p), "r") as hf:
+                for attr_name in ("model_config", "training_config"):
+                    if attr_name in hf.attrs:
+                        raw = hf.attrs[attr_name]
+                        if isinstance(raw, bytes):
+                            raw = raw.decode("utf-8", errors="replace")
+                        configs.append(json.loads(raw))
+        except ImportError:
+            configs = _carve_model_configs_pure_python(p)
 
-            # ---- decompression bomb heuristic --------------------------- #
-            total_uncompressed = 0
-            compressed_payload = 0
+        for cfg in configs:
+            _walk_keras_config(cfg, findings)
 
-            def visit_datasets(obj_name, obj):
-                nonlocal datasets, total_uncompressed, compressed_payload
-                if not hasattr(obj, "shape"):
-                    return
-                datasets += 1
-                nbytes = int(obj.size) * obj.dtype.itemsize
-                total_uncompressed += nbytes
-                stored = obj.id.get_storage_size()
-                if obj.compression and stored > 0:
-                    compressed_payload += stored
-                    ratio = nbytes / max(stored, 1)
-                    if ratio > COMPRESSION_RATIO_LIMIT:
-                        bomb_hits.append(
-                            f"dataset '{obj_name}': {ratio:.1f}:1 "
-                            f"({nbytes} B stored as {stored} B, "
-                            f"compression={obj.compression})")
+    except Exception as e:
+        return {
+            "verdict": "SUSPICIOUS",
+            "confidence": 0.60,
+            "format": "HDF5",
+            "summary": f"HDF5 inspection error: {e}",
+            "findings": [{"severity": "SUSPICIOUS", "type": "HDF5_PARSE_ERROR", "detail": str(e)}],
+            "features": {"format": "HDF5", "engine": engine, "parse_error": str(e)},
+        }
 
-            h5.visititems(visit_datasets)
+    has_mal = any(f["severity"] == "MALICIOUS" for f in findings)
+    has_susp = any(f["severity"] == "SUSPICIOUS" for f in findings)
 
-            if file_size > 0:
-                global_ratio = total_uncompressed / file_size
-                if global_ratio > COMPRESSION_RATIO_LIMIT:
-                    bomb_hits.append(
-                        f"file-level ratio {global_ratio:.1f}:1 "
-                        f"({total_uncompressed} B uncompressed vs "
-                        f"{file_size} B on disk)")
+    if has_mal:
+        verdict, conf = "MALICIOUS", 0.96
+        summary = f"Hostile Keras Lambda payload in HDF5 ({findings[0]['detail']})"
+    elif has_susp:
+        verdict, conf = "SUSPICIOUS", 0.72
+        summary = f"HDF5 model contains executable Lambda layer requiring review ({findings[0]['detail']})"
+    else:
+        verdict, conf = "BENIGN", 0.95
+        summary = f"Clean HDF5 container (engine={engine}, configs_inspected={len(configs)})"
 
-            # ---- Lambda layer bytecode audit ----------------------------- #
-            if "model_config" in h5.attrs:
-                raw_cfg = h5.attrs["model_config"]
-                cfg_str = raw_cfg.decode("utf-8") if isinstance(raw_cfg, bytes) \
-                    else str(raw_cfg)
-                try:
-                    cfg = json.loads(cfg_str)
-                except json.JSONDecodeError as exc:
-                    cfg = None
-                    lambda_findings.append(
-                        {"error": f"model_config not valid JSON: {exc}"})
+    return {
+        "verdict": verdict,
+        "confidence": conf,
+        "format": "HDF5",
+        "summary": summary,
+        "findings": findings,
+        "features": {"format": "HDF5", "engine": engine, "configs_inspected": len(configs)},
+    }
 
-                def walk_layers(node, trail=""):
-                    if isinstance(node, dict):
-                        if node.get("class_name") == "Lambda":
-                            inner = node.get("config", {})
-                            entry = {"layer": inner.get("name", trail),
-                                     "function": None, "decode": None}
-                            for field in ("function",):
-                                blob = inner.get(field)
-                                if isinstance(blob, str):
-                                    entry["function"] = _analyze_lambda_code(blob)
-                                elif isinstance(blob, (list, tuple)) and blob \
-                                        and isinstance(blob[0], str):
-                                    entry["function"] = _analyze_lambda_code(blob[0])
-                            if entry["function"]:
-                                lambda_findings.append(entry)
-                        for k, v in node.items():
-                            walk_layers(v, f"{trail}/{k}")
-                    elif isinstance(node, list):
-                        for i, v in enumerate(node):
-                            walk_layers(v, f"{trail}[{i}]")
-
-                if cfg is not None:
-                    walk_layers(cfg)
-    except Exception as exc:
-        return _report(name, "SUSPICIOUS", "MEDIUM", "NONE",
-                       f"HDF5 parse failed: {exc}", error=str(exc))
-
-    dangerous = [f for f in lambda_findings
-                 if f.get("function") and f["function"].get("dangerous_globals")]
-
-    details = dict(dataset_count=datasets, bomb_indicators=bomb_hits,
-                   lambda_layers=lambda_findings)
-
-    if dangerous:
-        return _report(name, "MALICIOUS", "HIGH", "LAMBDA_BYTECODE",
-                       "Keras Lambda layer bytecode references dangerous "
-                       "globals — arbitrary-code-execution primitive.",
-                       **details)
-    if bomb_hits:
-        return _report(name, "MALICIOUS", "HIGH", "DOS_BOMB",
-                       "HDF5 decompression-bomb pattern detected.", **details)
-    if lambda_findings:
-        return _report(name, "SUSPICIOUS", "MEDIUM", "LAMBDA_BYTECODE",
-                       f"{len(lambda_findings)} Lambda layer(s) found but "
-                       f"bytecode looks benign.", **details)
-    return _report(name, "BENIGN", "HIGH", "NONE",
-                   f"Clean HDF5/Keras model: {datasets} datasets, sane "
-                   f"compression ratios, no Lambda layers.", **details)
-
-
-if __name__ == "__main__":
-    import sys
-    print(json.dumps(scan_hdf5(sys.argv[1]), indent=2, default=str))
+scan = scan_hdf5
+inspect_hdf5 = scan_hdf5

@@ -58,6 +58,18 @@ def sniff_format(path: str) -> str:
         return "HDF5"
     if head.startswith(GGUF_MAGIC):
         return "GGUF"
+    if head.startswith(b"\x93NUMPY"):
+        return "NUMPY"
+    if head.startswith(b"7z\xbc\xaf\x27\x1c"):
+        return "7Z"
+    if head.startswith(b"\x1f\x8b"):
+        return "GZIP"
+    if head.startswith(b"BZh"):
+        return "BZ2"
+    if head.startswith(b"\xfd7zXZ\x00"):
+        return "XZ"
+    if len(head) >= 262 and head[257:262] == b"ustar":
+        return "TAR"
     if head.startswith(ZIP_MAGIC):
         from inspectors.keras_scanner import classify_zip
         zip_kind = classify_zip(path)
@@ -165,6 +177,12 @@ def dispatch(path: str,
         return scan_onnx(path)
     if fmt == "HDF5":
         return scan_hdf5(path)
+    if fmt == "NUMPY":
+        from inspectors.numpy_scanner import scan_numpy
+        return scan_numpy(path)
+    if fmt in ("7Z", "TAR", "GZIP", "BZ2", "XZ"):
+        from inspectors.archive_scanner import scan_archive
+        return scan_archive(path, fmt, dispatch)
     if fmt == "GGUF":
         return scan_gguf(path)
     if fmt == "SAVEDMODEL":
