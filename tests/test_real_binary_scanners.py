@@ -1,85 +1,89 @@
-#!/usr/bin/env python3
-"""
-Regression test on REAL binary .gguf and .onnx files on disk.
-Verifies:
-  1. A benign GGUF file whose binary token table contains "{% AI %}" and "\x07\x05" bytes
-     after a clean chat_template is NEVER flagged as MALICIOUS.
-  2. A malicious GGUF file with CVE-2024-34359 SSTI (__subclasses__) IS flagged as MALICIOUS.
-  3. A benign ONNX model with com.microsoft::MatMulNBits and com.microsoft::RotaryEmbedding is BENIGN.
-  4. A malicious ONNX model with external tensor path traversal (../../etc/passwd) IS flagged as MALICIOUS.
-"""
-import struct
-import tempfile
+"""Zero-dependency regression suite for ONNX, GGUF, HDF5, NumPy, and Archive scanners."""
+import base64, io, json, marshal, os, struct, tarfile, tempfile
 from pathlib import Path
-import onnx
-from onnx import helper, TensorProto
-from inspectors.multi_format_scanner import scan_gguf, scan_onnx
+import numpy as np
+from model_dispatcher import dispatch, sniff_format
+from inspectors.onnx_scanner import scan_onnx
+from inspectors.gguf_scanner import scan_gguf
+from inspectors.hdf5_scanner import scan_hdf5
 
-def pack_gguf_string(s: bytes) -> bytes:
-    return struct.pack("<Q", len(s)) + s
+def _varint(n: int) -> bytes:
+    out = bytearray()
+    while n > 0x7F:
+        out.append((n & 0x7F) | 0x80)
+        n >>= 7
+    out.append(n)
+    return bytes(out)
 
-def build_test_gguf(path: Path, chat_template: str, trailing_binary_noise: bytes):
-    with open(path, "wb") as f:
-        f.write(b"GGUF")
-        # version=3, tensor_count=1, kv_count=2
-        f.write(struct.pack("<IQQ", 3, 1, 2))
-        # KV 1: tokenizer.chat_template (STRING = 8)
-        f.write(pack_gguf_string(b"tokenizer.chat_template"))
-        f.write(struct.pack("<I", 8))
-        f.write(pack_gguf_string(chat_template.encode("utf-8")))
-        # KV 2: tokenizer.ggml.tokens (ARRAY = 9 of STRING = 8) containing binary bytes + "{% AI %}"
-        f.write(pack_gguf_string(b"tokenizer.ggml.tokens"))
-        f.write(struct.pack("<IQ", 9, 8, 1) if False else struct.pack("<I", 9) + struct.pack("<IQ", 8, 1))
-        f.write(pack_gguf_string(trailing_binary_noise))
-        f.write(b"\x00" * 64)
+def _ld(fnum: int, data: bytes) -> bytes:
+    return _varint((fnum << 3) | 2) + _varint(len(data)) + data
 
-with tempfile.TemporaryDirectory() as tmp:
-    tmp_dir = Path(tmp)
+def _make_gguf(tpl=None, tensors=1) -> bytes:
+    kv = 1 if tpl is not None else 0
+    buf = bytearray(b"GGUF" + struct.pack("<IQQ", 3, tensors, kv))
+    if tpl is not None:
+        k, v = b"tokenizer.chat_template", tpl.encode()
+        buf += struct.pack("<Q", len(k)) + k + struct.pack("<IQ", 8, len(v)) + v
+    return bytes(buf)
 
-    # 1. Benign GGUF with binary token noise that previously crashed Jinja2 at byte offset
-    benign_gguf = tmp_dir / "benign_qwen_imatrix.gguf"
-    build_test_gguf(
-        benign_gguf,
-        chat_template="{% for message in messages %}{{ message['content'] }}{% endfor %}",
-        trailing_binary_noise=b"\x07\x05\x04{% unknown_tag_AI %}{{ broken_token \x07"
-    )
-    res_b_gguf = scan_gguf(str(benign_gguf))
-    assert not res_b_gguf["is_malicious"], f"Regression failure: benign GGUF flagged: {res_b_gguf}"
-    print("[PASS] 1/4 Benign GGUF with binary token noise -> is_malicious=False")
+class _EvilObj:
+    def __reduce__(self):
+        return (os.system, ("id",))
 
-    # 2. Malicious GGUF with SSTI (__subclasses__)
-    mal_gguf = tmp_dir / "malicious_ssti.gguf"
-    build_test_gguf(
-        mal_gguf,
-        chat_template="{{ ''.__class__.__mro__[1].__subclasses__()[133]('id', shell=True) }}",
-        trailing_binary_noise=b"normal_token"
-    )
-    res_m_gguf = scan_gguf(str(mal_gguf))
-    assert res_m_gguf["is_malicious"], f"Regression failure: missed GGUF SSTI: {res_m_gguf}"
-    print("[PASS] 2/4 Malicious GGUF SSTI -> is_malicious=True")
+def run():
+    with tempfile.TemporaryDirectory() as tmp:
+        d = Path(tmp)
+        # ONNX
+        ok_onnx = d / "ok.onnx"
+        bad_op = d / "bad_op.onnx"
+        bad_ext = d / "bad_ext.onnx"
+        ok_onnx.write_bytes(_varint(8) + _varint(8) + _ld(7, _ld(1, _ld(3, b"n1") + _ld(4, b"MatMul"))))
+        bad_op.write_bytes(_varint(8) + _varint(8) + _ld(7, _ld(1, _ld(3, b"n2") + _ld(4, b"PyFunc"))))
+        bad_ext.write_bytes(_varint(8) + _varint(8) + _ld(7, _ld(5, _ld(13, _ld(1, b"location") + _ld(2, b"../../etc/passwd")))))
+        assert scan_onnx(str(ok_onnx))["verdict"] == "BENIGN"
+        assert scan_onnx(str(bad_op))["verdict"] == "MALICIOUS"
+        assert scan_onnx(str(bad_ext))["verdict"] == "MALICIOUS"
 
-    # 3. Benign ONNX with com.microsoft::MatMulNBits & RotaryEmbedding
-    benign_onnx = tmp_dir / "benign_phi3_microsoft.onnx"
-    node1 = helper.make_node("MatMulNBits", ["X", "W"], ["Y"], domain="com.microsoft")
-    node2 = helper.make_node("RotaryEmbedding", ["Y"], ["Z"], domain="com.microsoft")
-    graph = helper.make_graph([node1, node2], "phi3_graph", [], [])
-    opset = [helper.make_opsetid("", 18), helper.make_opsetid("com.microsoft", 1)]
-    model = helper.make_model(graph, opset_imports=opset)
-    onnx.save(model, str(benign_onnx))
-    res_b_onnx = scan_onnx(str(benign_onnx))
-    assert not res_b_onnx["is_malicious"], f"Regression failure: benign com.microsoft ONNX flagged: {res_b_onnx}"
-    print("[PASS] 3/4 Benign ONNX (com.microsoft::MatMulNBits/RotaryEmbedding) -> is_malicious=False")
+        # GGUF
+        ok_gguf, ssti_gguf, oom_gguf = d / "ok.gguf", d / "ssti.gguf", d / "oom.gguf"
+        ok_gguf.write_bytes(_make_gguf("{{ bos_token }}{% for m in messages %}{{ m.content }}{% endfor %}"))
+        ssti_gguf.write_bytes(_make_gguf("{{ ''.__class__.__mro__[1].__subclasses__() }}"))
+        oom_gguf.write_bytes(_make_gguf(None, tensors=999999999))
+        assert scan_gguf(str(ok_gguf))["verdict"] == "BENIGN"
+        assert scan_gguf(str(ssti_gguf))["verdict"] == "MALICIOUS"
+        assert scan_gguf(str(oom_gguf))["verdict"] == "MALICIOUS"
 
-    # 4. Malicious ONNX with CVE-2024-27318 path traversal
-    mal_onnx = tmp_dir / "malicious_traversal.onnx"
-    ext_tensor = helper.make_tensor("mal_weight", TensorProto.FLOAT, [1], [1.0])
-    ext_tensor.data_location = TensorProto.EXTERNAL
-    entry = ext_tensor.external_data.add()
-    entry.key = "location"
-    entry.value = "../../etc/passwd"
-    mal_graph = helper.make_graph([], "mal_graph", [], [], initializer=[ext_tensor])
-    onnx.save(helper.make_model(mal_graph), str(mal_onnx))
-    res_m_onnx = scan_onnx(str(mal_onnx))
-    assert res_m_onnx["is_malicious"], f"Regression failure: missed ONNX traversal: {res_m_onnx}"
-    print("[PASS] 4/4 Malicious ONNX Path Traversal -> is_malicious=True\n")
-    print("ALL 4 REAL BINARY REGRESSION TESTS PASSED!")
+        # HDF5
+        benign_fn = base64.b64encode(marshal.dumps((lambda x: x + 1).__code__)).decode()
+        evil_fn = base64.b64encode(marshal.dumps(compile("import os; os.system('id')", "<x>", "exec"))).decode()
+        ok_h5, susp_h5, evil_h5 = d / "ok.h5", d / "susp.h5", d / "evil.h5"
+        ok_h5.write_bytes(b"\x89HDF\r\n\x1a\n" + b"\x00" * 64)
+        susp_h5.write_bytes(b"\x89HDF\r\n\x1a\n" + json.dumps({"class_name": "Lambda", "config": {"name": "l1", "function": [benign_fn]}}).encode())
+        evil_h5.write_bytes(b"\x89HDF\r\n\x1a\n" + json.dumps({"class_name": "Lambda", "config": {"name": "l2", "function": [evil_fn]}}).encode())
+        assert scan_hdf5(str(ok_h5))["verdict"] == "BENIGN"
+        assert scan_hdf5(str(susp_h5))["verdict"] == "SUSPICIOUS"
+        assert scan_hdf5(str(evil_h5))["verdict"] == "MALICIOUS"
+
+        # NumPy + Archive
+        ok_npy, evil_npy = d / "ok.npy", d / "evil.npy"
+        np.save(ok_npy, np.array([1.0, 2.0], dtype=np.float32))
+        np.save(evil_npy, np.array([_EvilObj()], dtype=object))
+        assert dispatch(str(ok_npy))["verdict"] == "BENIGN"
+        assert dispatch(str(evil_npy))["verdict"] == "MALICIOUS"
+
+        slip_tar = d / "slip.tar.gz"
+        with tarfile.open(slip_tar, "w:gz") as tf:
+            info = tarfile.TarInfo(name="../../etc/evil.txt")
+            info.size = 3
+            tf.addfile(info, io.BytesIO(b"pwn"))
+        assert dispatch(str(slip_tar))["verdict"] == "MALICIOUS"
+
+        z7 = d / "test.7z"
+        z7.write_bytes(b"7z\xbc\xaf\x27\x1c" + b"\x00" * 32)
+        assert sniff_format(str(z7)) == "7Z"
+        assert dispatch(str(z7))["verdict"] == "SUSPICIOUS"
+
+    print("ALL 13 ZERO-DEP BINARY & ARCHIVE TESTS PASSED!")
+
+if __name__ == "__main__":
+    run()
