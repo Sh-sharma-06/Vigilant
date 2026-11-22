@@ -32,3 +32,9 @@ eval_dataset/
 *.onnx
 *.safetensors
 *.gguf
+
+vigilant_scan_cache/
+
+# Generated runtime cache
+vigilant_cache/
+vigilant_cache/
