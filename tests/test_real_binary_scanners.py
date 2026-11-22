@@ -60,15 +60,19 @@ def run():
 
         # HDF5
         benign_fn = base64.b64encode(marshal.dumps((lambda x: x + 1).__code__)).decode()
-        evil_fn = base64.b64encode(marshal.dumps(compile("import os; os.system('id')", "<x>", "exec"))).decode()
+        evil_fn = base64.b64encode(marshal.dumps(compile("__import__('os').system('id')", "<x>", "exec"))).decode()
         ok_h5, susp_h5, evil_h5 = d / "ok.h5", d / "susp.h5", d / "evil.h5"
         if h5py is not None:
             with h5py.File(ok_h5, "w") as hf:
                 hf.create_dataset("weights", data=np.array([1.0, 2.0, 3.0], dtype=np.float32))
+            with h5py.File(susp_h5, "w") as hf:
+                hf.attrs["model_config"] = json.dumps({"class_name": "Lambda", "config": {"name": "l1", "function": [benign_fn]}})
+            with h5py.File(evil_h5, "w") as hf:
+                hf.attrs["model_config"] = json.dumps({"class_name": "Lambda", "config": {"name": "l2", "function": [evil_fn]}})
         else:
             ok_h5.write_bytes(b"\x89HDF\r\n\x1a\n" + b"\x00" * 64)
-        susp_h5.write_bytes(b"\x89HDF\r\n\x1a\n" + json.dumps({"class_name": "Lambda", "config": {"name": "l1", "function": [benign_fn]}}).encode())
-        evil_h5.write_bytes(b"\x89HDF\r\n\x1a\n" + json.dumps({"class_name": "Lambda", "config": {"name": "l2", "function": [evil_fn]}}).encode())
+            susp_h5.write_bytes(b"\x89HDF\r\n\x1a\n" + json.dumps({"class_name": "Lambda", "config": {"name": "l1", "function": [benign_fn]}}).encode())
+            evil_h5.write_bytes(b"\x89HDF\r\n\x1a\n" + json.dumps({"class_name": "Lambda", "config": {"name": "l2", "function": [evil_fn]}}).encode())
         assert scan_hdf5(str(ok_h5))["verdict"] == "BENIGN"
         assert scan_hdf5(str(susp_h5))["verdict"] == "SUSPICIOUS"
         assert scan_hdf5(str(evil_h5))["verdict"] == "MALICIOUS"
