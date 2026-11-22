@@ -1,0 +1,3 @@
+tool,TP,FN,FP,TN,recall,FPR,precision,median_sec,errors_or_timeouts
+vigilant_strict,38,0,1,6,38/38 = 100.0% (CI 90.8%-100.0%),1/7 = 14.3% (CI 2.6%-51.3%),97.4%,0.069,0
+vigilant_lenient,36,2,0,7,36/38 = 94.7% (CI 82.7%-98.5%),0/7 = 0.0% (CI 0.0%-35.4%),100.0%,0.076,0

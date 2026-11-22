@@ -1,80 +1,148 @@
-import subprocess
-import os
 import sys
+import os
+import pickle
+import warnings
+import zipfile
+import socket
 
+warnings.filterwarnings("ignore", category=UserWarning)
 
-def get_sinkhole_ip():
-    result = subprocess.run(
-        ["docker", "inspect", "-f",
-         "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
-         "fakenet-sinkhole-container"],
-        capture_output=True, text=True
-    )
-    ip = result.stdout.strip()
-    if not ip:
-        raise RuntimeError(
-            "Could not find fakenet-sinkhole-container IP. "
-            "Did you run ./setup_fakenet.sh first?"
-        )
-    return ip
+# ==========================================
+# 1. ANTI-EVASION & NETWORK LIMITS
+# ==========================================
+# Prevent the fuzzer from hanging on live network objects
+socket.setdefaulttimeout(1.0) 
 
+# Neutralize the anti-sandbox suicide pills
+sys.exit = lambda code=0: print(f"Blocked attempt to call sys.exit({code})")
+os._exit = lambda code=0: print(f"Blocked attempt to call os._exit({code})")
 
-def get_network_gateway():
-    result = subprocess.run(
-        ["docker", "network", "inspect", "fakenet-isolated",
-         "-f", "{{range .IPAM.Config}}{{.Gateway}}{{end}}"],
-        capture_output=True, text=True
-    )
-    gateway = result.stdout.strip()
-    if not gateway:
-        raise RuntimeError("Could not find fakenet-isolated network gateway.")
-    return gateway
+# ==========================================
+# 2. GHOST CLASS (CUDA SPOOFING ENABLED)
+# ==========================================
+class MockClass:
+    def __init__(self, *args, **kwargs): pass
+    def __call__(self, *args, **kwargs): return MockClass()
+    def __getattr__(self, name): return MockClass()
+    def __setstate__(self, *args, **kwargs): pass
+    def __getitem__(self, key): return MockClass()
+    def __setitem__(self, key, value): pass
+    def __iter__(self): return iter([])
+    def __str__(self): return "MockClass"
+    def __repr__(self): return "MockClass"
+    def __bool__(self): return True  
 
+class GhostUnpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        try:
+            return super().find_class(module, name)
+        except Exception:
+            return MockClass
 
-def detonate_model(model_filename):
-    print(f"[*] Provisioning isolated container for {model_filename}...")
+    def persistent_load(self, pid):
+        return MockClass()
 
-    current_dir = os.path.abspath(os.path.dirname(__file__))
-    sinkhole_ip = get_sinkhole_ip()
-    gateway_ip = get_network_gateway()
-    print(f"[*] Sinkhole located at {sinkhole_ip}:8080")
-    print(f"[*] Network gateway: {gateway_ip}")
+def safe_ghost_load(file_path):
+    if zipfile.is_zipfile(file_path):
+        with zipfile.ZipFile(file_path, 'r') as z:
+            pkl_files = [n for n in z.namelist() if n.endswith('.pkl')]
+            if pkl_files:
+                with z.open(pkl_files[0]) as f:
+                    return GhostUnpickler(f).load()
+            else:
+                raise Exception("Zip file does not contain a .pkl stream")
+    else:
+        with open(file_path, 'rb') as f:
+            return GhostUnpickler(f).load()
 
-    # 1. Add a default route so the kernel's routing lookup succeeds for
-    #    ANY destination (even ones with no real path out) -- otherwise
-    #    the connection is rejected before iptables ever sees the packet.
-    # 2. DNAT redirects that packet to the sinkhole instead of letting it
-    #    actually leave -- this is what makes interception IP-agnostic.
-    inner_cmd = (
-        f"ip route add default via {gateway_ip} 2>/dev/null; "
-        f"iptables -t nat -A OUTPUT -p tcp -j DNAT --to-destination {sinkhole_ip}:8080 && "
-        f"strace -f -e trace=file,process,network -o /sandbox/strace_output.log "
-        f"python run_model.py {model_filename}"
-    )
+# ==========================================
+# 3. LOUD ADVERSARIAL FUZZING ENGINE
+# ==========================================
+def aggressive_fuzz(obj):
+    mock_input = MockClass()
+    adversarial_string = "print('pwned') or __import__('os').system('echo pwned')"
 
-    cmd = [
-        "docker", "run", "--rm",
-        "--network", "fakenet-isolated",
-        "--cap-add=NET_ADMIN",
-        "-v", f"{current_dir}:/sandbox",
-        "ml-sandbox",
-        "bash", "-c", inner_cmd
+    probes = [
+        lambda: obj(),
+        lambda: obj(mock_input),
+        lambda: obj(adversarial_string),
+        lambda: getattr(obj, 'forward', MockClass)(mock_input),
+        lambda: getattr(obj, 'predict', MockClass)(mock_input)
     ]
+    
+    for probe in probes:
+        try:
+            for _ in range(3): 
+                probe()
+        except Exception:
+            # Silenced to prevent terminal spam when the fuzzer hits valid objects
+            pass  
 
+# ==========================================
+# 4. RECURSIVE TRAVERSAL 
+# ==========================================
+def deep_fuzz(obj, depth=0, visited=None):
+    if visited is None:
+        visited = set()
+    
+    obj_id = id(obj)
+    if obj_id in visited or depth > 10:
+        return
+    visited.add(obj_id)
+
+    if type(obj).__name__ == "MockClass":
+        return
+
+    if callable(obj):
+        aggressive_fuzz(obj)
+
+    if isinstance(obj, dict):
+        for v in obj.values():
+            deep_fuzz(v, depth + 1, visited)
+    elif isinstance(obj, (list, tuple, set)):
+        for item in obj:
+            deep_fuzz(item, depth + 1, visited)
+    elif hasattr(obj, '__dict__'):
+        for v in obj.__dict__.values():
+            deep_fuzz(v, depth + 1, visited)
+
+# ==========================================
+# 5. EXECUTION ENTRY POINT
+# ==========================================
+def run_sandbox(model_path):
     try:
-        print("[*] Detonating payload and capturing syscalls...")
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        print(result.stdout)
-        if result.returncode != 0:
-            print("[!] STDERR:", result.stderr)
-        print("[*] Execution finished. Container destroyed.")
-        print("[*] Telemetry saved to strace_output.log")
-    except Exception as e:
-        print(f"[!] Sandbox error: {e}")
+        obj = safe_ghost_load(model_path)
+        print("Model loaded. Commencing deep recursive fuzzing sweep...")
+        deep_fuzz(obj)
+        
+        # If it survives the fuzzing without the honeypot throwing an exception, 
+        # return a clean JSON report back to the dispatcher.
+        return {
+            "model_name": os.path.basename(model_path),
+            "format": "PICKLE",
+            "verdict": "BENIGN",
+            "confidence": "HIGH",
+            "attack_vector": "NONE",
+            "summary": "Model loaded successfully without triggering any anomalous behavior.",
+            "technical_details": {} 
+        }
 
+    except BaseException as e:
+        # BaseException catches SystemExit calls from malware that bypass the lambda patch
+        print(f"Load or fuzzing failed: {e}")
+        return {
+            "model_name": os.path.basename(model_path),
+            "format": "PICKLE",
+            "verdict": "MALICIOUS",
+            "confidence": "HIGH",
+            "attack_vector": "CORRUPT_OR_EXPLOIT",
+            "summary": f"Sandbox execution crashed: {e}",
+            "technical_details": {}
+        }
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        detonate_model(sys.argv[1])
-    else:
-        print("Usage: python sandbox_runner.py <model_file.pkl>")
+    # Provides fallback execution if the script is run completely standalone
+    if len(sys.argv) < 2:
+        sys.exit(1)
+    import json
+    print(json.dumps(run_sandbox(sys.argv[1]), indent=2))

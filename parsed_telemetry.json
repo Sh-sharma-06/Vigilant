@@ -1,7 +1,0 @@
-{
-    "network_connections": [],
-    "processes_executed": [
-        "/usr/local/bin/python"
-    ],
-    "suspicious_file_activity": []
-}

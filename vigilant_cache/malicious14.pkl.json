@@ -1,0 +1,1 @@
+{"model_name": "malicious14.pkl", "format": "PICKLE", "technical_details": {"honeypot": {"canaries_active": 13, "telemetry_events": 2, "exfiltration_attempts": []}}, "verdict": "MALICIOUS", "confidence": "HIGH", "attack_vector": "CORRUPT_OR_EXPLOIT", "summary": "Sandbox execution crashed: _run_code() missing 1 required positional argument: 'run_globals'"}

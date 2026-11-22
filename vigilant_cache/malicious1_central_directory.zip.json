@@ -1,0 +1,1 @@
+{"model_name": "malicious1_central_directory.zip", "format": "PICKLE", "technical_details": {"honeypot": {"canaries_active": 13, "telemetry_events": 2, "exfiltration_attempts": []}}, "verdict": "MALICIOUS", "confidence": "HIGH", "attack_vector": "CORRUPT_OR_EXPLOIT", "summary": "Sandbox execution crashed: File name in directory 'data.pkl' and header b'datap.kl' differ."}
