@@ -5,6 +5,7 @@ from collections import defaultdict
 
 TIMEOUT = 300  # seconds per file
 OUT_SUFFIX = ""  # set from the command line when only one tool is run
+NO_CACHE = False  # set via --no-cache on the command line
 
 
 def v_picklescan(rc, out, err):
@@ -48,7 +49,7 @@ def v_vig_strict(rc, out, err):
 def v_vig_lenient(rc, out, err):
     return _vig(out) == "MALICIOUS"
 
-VIG = lambda f: [sys.executable, "vigilant_one.py", f]   # same python that runs the harness
+VIG = lambda f: [sys.executable, "vigilant_one.py", f] + (["--no-cache"] if NO_CACHE else [])   # same python that runs the harness
 TOOLS = {
     "picklescan": (lambda f: ["picklescan", "-p", f], v_picklescan),
     "modelscan":  (lambda f: ["modelscan", "-p", f], v_modelscan),
@@ -155,9 +156,13 @@ def main(labels_path):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) not in (2, 3):
-        sys.exit("usage: benchmark_harness.py labels.csv [tool-name-prefix]")
-    if len(sys.argv) == 3:                      # e.g. "vigilant" -> only the Vigilant rows
-        TOOLS = {k: v for k, v in TOOLS.items() if k.startswith(sys.argv[2])}
-        OUT_SUFFIX = "_" + sys.argv[2]
-    main(sys.argv[1])
+    args = sys.argv[1:]
+    NO_CACHE = "--no-cache" in args
+    args = [a for a in args if a != "--no-cache"]
+
+    if len(args) not in (1, 2):
+        sys.exit("usage: benchmark_harness.py labels.csv [tool-name-prefix] [--no-cache]")
+    if len(args) == 2:                      # e.g. "vigilant" -> only the Vigilant rows
+        TOOLS = {k: v for k, v in TOOLS.items() if k.startswith(args[1])}
+        OUT_SUFFIX = "_" + args[1]
+    main(args[0])

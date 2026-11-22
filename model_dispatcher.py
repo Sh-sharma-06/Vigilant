@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import os
 import pickletools
-import behavior_sim
 from typing import Any, Dict, Optional
 
 from inspectors.safetensors_scanner import scan_safetensors
@@ -47,6 +46,8 @@ def _parses_as_pickle(path: str, limit: int = 64 * 1024 * 1024) -> bool:
 
 
 def sniff_format(path: str) -> str:
+    if os.path.basename(str(path)).lower() == "saved_model.pb":
+        return "SAVEDMODEL"
     """Identify the container from the first 16 bytes (extension ignored)."""
     with open(path, "rb") as fh:
         head = fh.read(16)
@@ -57,7 +58,23 @@ def sniff_format(path: str) -> str:
         return "HDF5"
     if head.startswith(GGUF_MAGIC):
         return "GGUF"
+    if head.startswith(b"\x93NUMPY"):
+        return "NUMPY"
+    if head.startswith(b"7z\xbc\xaf\x27\x1c"):
+        return "7Z"
+    if head.startswith(b"\x1f\x8b"):
+        return "GZIP"
+    if head.startswith(b"BZh"):
+        return "BZ2"
+    if head.startswith(b"\xfd7zXZ\x00"):
+        return "XZ"
+    if len(head) >= 262 and head[257:262] == b"ustar":
+        return "TAR"
     if head.startswith(ZIP_MAGIC):
+        from inspectors.keras_scanner import classify_zip
+        zip_kind = classify_zip(path)
+        if zip_kind == "KERAS_V3":
+            return "KERAS"
         return "PYTORCH_ZIP"          # PyTorch checkpoints are ZIP archives
     if head[0] in PICKLE_MAGIC_RANGE:
         return "PICKLE"
@@ -137,7 +154,7 @@ def dispatch(path: str,
                 if engine.active:
                     engine.stop()
                 honeypot_summary = engine.summary()
-                telemetry = list(engine.telemetry) + behavior_sim.drain_events()
+                telemetry = list(engine.telemetry)
         else:
             runner_report = behavior_sim.run_sessions(lambda: _run_sandbox(sandbox_runner, path))
             telemetry = behavior_sim.drain_events()
@@ -161,8 +178,45 @@ def dispatch(path: str,
         return scan_onnx(path)
     if fmt == "HDF5":
         return scan_hdf5(path)
+    if fmt == "NUMPY":
+        from inspectors.numpy_scanner import scan_numpy
+        return scan_numpy(path)
+    if fmt in ("7Z", "TAR", "GZIP", "BZ2", "XZ"):
+        from inspectors.archive_scanner import scan_archive
+        return scan_archive(path, fmt, dispatch)
     if fmt == "GGUF":
         return scan_gguf(path)
+    if fmt == "SAVEDMODEL":
+        from savedmodel_pb_scanner import scan_savedmodel
+        res = scan_savedmodel(str(path))
+        v = str(res.get("verdict", "BENIGN")).upper()
+        verdict = "MALICIOUS" if v == "MALICIOUS" else ("SUSPICIOUS" if v == "SUSPICIOUS" else "BENIGN")
+        return {
+            "verdict": verdict,
+            "confidence": "HIGH",
+            "format": "PROTOTENSOR",
+            "summary": res.get("summary") or ("Dangerous TensorFlow op detected" if verdict != "BENIGN" else "no dangerous ops found"),
+            "features": {
+                "decided_by": "savedmodel_pb_scanner",
+                "protobuf_scan": res,
+                "findings": res.get("findings", []),
+            },
+        }
+
+    if fmt == "KERAS":
+        from inspectors.keras_scanner import scan_keras_v3
+        result = scan_keras_v3(path)
+        verdict_map = {"CLEAN": "BENIGN", "SUSPICIOUS": "SUSPICIOUS", "MALICIOUS": "MALICIOUS"}
+        confidence_map = {"CLEAN": "HIGH", "SUSPICIOUS": "MEDIUM", "MALICIOUS": "HIGH"}
+        raw_verdict = result.get("verdict", "ERROR")
+        return {
+            "model_name": name, "format": fmt,
+            "verdict": verdict_map.get(raw_verdict, "ERROR"),
+            "confidence": confidence_map.get(raw_verdict, "LOW"),
+            "attack_vector": "LAMBDA_EXPLOIT" if raw_verdict == "MALICIOUS" else "NONE",
+            "summary": result.get("reason", ""),
+            "technical_details": {"keras_scan": result, "decided_by": "keras_scanner"},
+        }
 
     # Unknown container. It may still be a truncated or damaged pickle whose
     # payload sits before the bad bytes, so let the static pass have a look.

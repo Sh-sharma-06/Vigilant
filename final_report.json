@@ -1,0 +1,42 @@
+{
+  "model": "/home/sandesh/vigilant-eval-triage/eval_dataset/9_best_seed2024.pt",
+  "registry": {
+    "status": "safe"
+  },
+  "static": {
+    "file": "/home/sandesh/vigilant-eval-triage/eval_dataset/9_best_seed2024.pt",
+    "verdict": "clean",
+    "streams": [
+      {
+        "stream": "best_seed2024/data.pkl",
+        "verdict": "clean",
+        "findings": []
+      }
+    ]
+  },
+  "sandbox": {
+    "status": "SUCCESS"
+  },
+  "telemetry": {
+    "processes": [
+      {
+        "binary": "/usr/local/bin/python",
+        "command": "python /sandbox/run_model.py /sandbox/model/9_best_seed2024.pt"
+      }
+    ],
+    "files_written": [],
+    "network_connections": []
+  },
+  "behavioral": {
+    "verdict": "BENIGN",
+    "risk_score": 0,
+    "flags": []
+  },
+  "triage": {
+    "verdict": "uncertain-needs-review",
+    "confidence": 0.0,
+    "findings": [],
+    "summary": "LLM triage unavailable: No module named 'pydantic'"
+  },
+  "verdict": "BENIGN"
+}

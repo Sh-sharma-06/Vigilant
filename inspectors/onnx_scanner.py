@@ -1,208 +1,186 @@
 """
-Vigilant ONNX Inspector
-=======================
-Static scanner for ONNX models. Uses the official `onnx` package when
-available (full protobuf deserialization); otherwise falls back to a
-raw-bytes heuristic scan with LOW confidence.
-
-Checks:
-  * node op-types / domains against the standard ONNX operator sets
-  * external_data references with directory traversal or absolute paths
-  * malformed / overflowing tensor dimensions (allocation bombs)
+Pure-Python Protobuf Wire-Format ONNX Security Scanner (Zero External Dependencies).
+Walks ModelProto -> GraphProto -> NodeProto / TensorProto without loading tensor weights.
+Detects:
+  1. External data path traversal (arbitrary file read via TensorProto.external_data)
+  2. Hostile custom operators & non-standard execution domains (PyFunc, PythonOp)
+  3. Malformed / deeply nested Protobuf DoS payloads
 """
 from __future__ import annotations
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
-import json
-import os
-import re
-from typing import Any, Dict, List
-
-FORMAT = "ONNX"
-DIM_PRODUCT_LIMIT = 1 << 40        # ~1 Ti elements == allocation-bomb territory
-
-ALLOWED_DOMAINS = {"", "ai.onnx", "ai.onnx.ml", "ai.onnx.preview.training"}
-
-# Standard ai.onnx operator allowlist (opset <= 21). Unknown op-types in the
-# default domain are flagged; anything outside ALLOWED_DOMAINS is a custom op.
-STANDARD_OPS = {
-    "Abs", "Acos", "Acosh", "Add", "AffineGrid", "And", "ArgMax", "ArgMin",
-    "Asin", "Asinh", "Atan", "Atanh", "AveragePool", "BatchNormalization",
-    "Bernoulli", "BitShift", "BitwiseAnd", "BitwiseNot", "BitwiseOr",
-    "BitwiseXor", "BlackmanWindow", "Cast", "CastLike", "Ceil", "Celu",
-    "CenterCropPad", "Clip", "Col2Im", "Compress", "Concat",
-    "ConcatFromSequence", "Constant", "ConstantOfShape", "Conv",
-    "ConvInteger", "ConvTranspose", "Cos", "Cosh", "CumSum", "DFT",
-    "DeformConv", "DepthToSpace", "DequantizeLinear", "Det", "Div",
-    "Dropout", "DynamicQuantizeLinear", "Einsum", "Elu", "Equal", "Erf",
-    "Exp", "Expand", "EyeLike", "Flatten", "Floor", "GRU", "Gather",
-    "GatherElements", "GatherND", "Gemm", "GlobalAveragePool",
-    "GlobalLpPool", "GlobalMaxPool", "Greater", "GreaterOrEqual",
-    "GridSample", "HammingWindow", "HannWindow", "HardSigmoid", "HardSwish",
-    "Hardmax", "Identity", "If", "ImageDecoder", "InstanceNormalization",
-    "IsInf", "IsNaN", "LRN", "LSTM", "LeakyRelu", "Less", "LessOrEqual",
-    "Log", "LogSoftmax", "Loop", "LpNormalization", "LpPool", "MatMul",
-    "MatMulInteger", "Max", "MaxPool", "MaxRoiPool", "MaxUnpool", "Mean",
-    "MeanVarianceNormalization", "MelWeightMatrix", "Min", "Mish", "Mod",
-    "Mul", "Multinomial", "Neg", "NonMaxSuppression", "NonZero", "Not",
-    "OneHot", "Optional", "OptionalGetElement", "OptionalHasElement", "Or",
-    "PRelu", "Pad", "Pow", "QLinearConv", "QLinearMatMul",
-    "QuantizeLinear", "RNN", "RandomNormal", "RandomNormalLike",
-    "RandomUniform", "RandomUniformLike", "Range", "Reciprocal",
-    "ReduceL1", "ReduceL2", "ReduceLogSum", "ReduceLogSumExp", "ReduceMax",
-    "ReduceMean", "ReduceMin", "ReduceProd", "ReduceSum", "ReduceSumSquare",
-    "RegexFullMatch", "Relu", "Resize", "ReverseSequence", "RoiAlign",
-    "Round", "STFT", "Scan", "Scatter", "ScatterElements", "ScatterND",
-    "Selu", "SequenceAt", "SequenceConstruct", "SequenceEmpty",
-    "SequenceErase", "SequenceInsert", "SequenceLength", "SequenceMap",
-    "Shape", "Shrink", "Sigmoid", "Sign", "Sin", "Sinh", "Size", "Slice",
-    "Softmax", "SoftmaxCrossEntropyLoss", "Softplus", "Softsign",
-    "SpaceToDepth", "Split", "SplitToSequence", "Sqrt", "Squeeze",
-    "StringNormalizer", "Sub", "Sum", "Tan", "Tanh", "TfIdfVectorizer",
-    "ThresholdedRelu", "Tile", "TopK", "Transpose", "Trilu", "Unique",
-    "Unsqueeze", "Upsample", "Where", "Xor",
+HOSTILE_OPS = {
+    "pyfunc", "pythonop", "eagerpyfunc", "pyfuncstateless",
+    "exec", "eval", "system", "shell", "popen", "custompython",
 }
-# ai.onnx.ml operators are classic-ML transforms — allowed but noted.
-_ML_DOMAIN = "ai.onnx.ml"
-_TRAVERSAL_RE = re.compile(r"(\.\.[\\/])|(^[\\/])|(^[A-Za-z]:[\\/])")
+STANDARD_DOMAINS = {"", "ai.onnx", "ai.onnx.ml", "ai.onnx.preview.training", "com.microsoft"}
+MAX_DEPTH = 32
 
 
-def _report(model_name: str, verdict: str, confidence: str, attack_vector: str,
-            summary: str, **details: Any) -> Dict[str, Any]:
-    return {
-        "model_name": model_name, "format": FORMAT, "verdict": verdict,
-        "confidence": confidence, "attack_vector": attack_vector,
-        "summary": summary, "technical_details": details,
-    }
+def _read_varint(buf: bytes, pos: int) -> Tuple[int, int]:
+    result = 0
+    shift = 0
+    n = len(buf)
+    while pos < n:
+        b = buf[pos]
+        pos += 1
+        result |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            return result, pos
+        shift += 7
+        if shift > 63:
+            raise ValueError("Varint overflow")
+    raise ValueError("Truncated varint")
 
 
-def _fallback_scan(path: str) -> Dict[str, Any]:
-    """Heuristic raw-bytes scan when the onnx package is unavailable."""
-    name = os.path.basename(path)
-    with open(path, "rb") as fh:
-        data = fh.read()
-    hits = []
-    if b"external_data" in data:
-        hits.append("references external_data")
-    for m in re.finditer(rb"\.\.[\\/]", data):
-        hits.append(f"traversal sequence at offset {m.start()}")
-    if hits:
-        return _report(name, "SUSPICIOUS", "LOW", "PATH_TRAVERSAL",
-                       "onnx package unavailable; raw scan found: "
-                       + "; ".join(hits), engine="raw-fallback", hits=hits)
-    return _report(name, "BENIGN", "LOW", "NONE",
-                   "onnx package unavailable; raw scan found no traversal "
-                   "or external-data markers.", engine="raw-fallback")
+def _iter_fields(buf: bytes):
+    pos = 0
+    n = len(buf)
+    while pos < n:
+        tag, pos = _read_varint(buf, pos)
+        field_num = tag >> 3
+        wire_type = tag & 0x07
+        if wire_type == 0:
+            val, pos = _read_varint(buf, pos)
+            yield field_num, wire_type, val
+        elif wire_type == 1:
+            if pos + 8 > n:
+                raise ValueError("Truncated 64-bit field")
+            yield field_num, wire_type, buf[pos:pos + 8]
+            pos += 8
+        elif wire_type == 2:
+            length, pos = _read_varint(buf, pos)
+            if pos + length > n:
+                raise ValueError("Truncated length-delimited field")
+            yield field_num, wire_type, buf[pos:pos + length]
+            pos += length
+        elif wire_type == 5:
+            if pos + 4 > n:
+                raise ValueError("Truncated 32-bit field")
+            yield field_num, wire_type, buf[pos:pos + 4]
+            pos += 4
+        else:
+            raise ValueError(f"Unsupported wire type {wire_type}")
+
+
+def _check_external_data(kv_bytes: bytes, findings: List[Dict[str, Any]]) -> None:
+    key, val = "", ""
+    for fnum, wtype, data in _iter_fields(kv_bytes):
+        if wtype == 2:
+            text = data.decode("utf-8", errors="replace")
+            if fnum == 1:
+                key = text
+            elif fnum == 2:
+                val = text
+    if key.lower() == "location":
+        if ".." in val or val.startswith("/") or val.startswith("\\") or (len(val) > 1 and val[1] == ":"):
+            findings.append({
+                "severity": "MALICIOUS",
+                "type": "ONNX_PATH_TRAVERSAL",
+                "detail": f"External tensor location escapes model directory: {val!r}",
+            })
+
+
+def _parse_tensor(tensor_bytes: bytes, findings: List[Dict[str, Any]]) -> None:
+    for fnum, wtype, data in _iter_fields(tensor_bytes):
+        # Field 13 = repeated StringStringEntryProto external_data
+        if fnum == 13 and wtype == 2:
+            _check_external_data(data, findings)
+
+
+def _parse_node(node_bytes: bytes, findings: List[Dict[str, Any]], ops_seen: set, domains_seen: set) -> None:
+    op_type, domain, name = "", "", ""
+    for fnum, wtype, data in _iter_fields(node_bytes):
+        if wtype == 2:
+            if fnum == 3:
+                name = data.decode("utf-8", errors="replace")
+            elif fnum == 4:
+                op_type = data.decode("utf-8", errors="replace")
+            elif fnum == 7:
+                domain = data.decode("utf-8", errors="replace")
+    if op_type:
+        ops_seen.add(op_type)
+        if op_type.lower() in HOSTILE_OPS:
+            findings.append({
+                "severity": "MALICIOUS",
+                "type": "ONNX_HOSTILE_OP",
+                "detail": f"Hostile operator {op_type!r} in node {name!r} (domain={domain!r})",
+            })
+    if domain:
+        domains_seen.add(domain)
+        if domain not in STANDARD_DOMAINS:
+            findings.append({
+                "severity": "SUSPICIOUS",
+                "type": "ONNX_CUSTOM_DOMAIN",
+                "detail": f"Non-standard operator domain {domain!r} on op {op_type!r}",
+            })
+
+
+def _parse_graph(graph_bytes: bytes, findings: List[Dict[str, Any]], ops_seen: set, domains_seen: set, depth: int = 0) -> None:
+    if depth > MAX_DEPTH:
+        findings.append({"severity": "MALICIOUS", "type": "ONNX_PROTOBUF_DOS", "detail": "Excessive graph nesting depth"})
+        return
+    for fnum, wtype, data in _iter_fields(graph_bytes):
+        if wtype != 2:
+            continue
+        if fnum == 1:  # repeated NodeProto node
+            _parse_node(data, findings, ops_seen, domains_seen)
+        elif fnum == 5:  # repeated TensorProto initializer
+            _parse_tensor(data, findings)
 
 
 def scan_onnx(path: str) -> Dict[str, Any]:
-    """Statically inspect an .onnx model. Returns Vigilant telemetry."""
-    name = os.path.basename(path)
-    try:
-        import onnx  # type: ignore
-    except ImportError:
-        try:
-            return _fallback_scan(path)
-        except OSError as exc:
-            return _report(name, "SUSPICIOUS", "LOW", "NONE",
-                           f"Unreadable file: {exc}", error=str(exc))
+    p = Path(path)
+    findings: List[Dict[str, Any]] = []
+    ops_seen: set = set()
+    domains_seen: set = set()
+    ir_version = None
 
     try:
-        model = onnx.load(path, load_external_data=False)
-    except Exception as exc:  # protobuf decode failure etc.
-        return _report(name, "SUSPICIOUS", "MEDIUM", "NONE",
-                       f"ONNX protobuf failed to parse: {exc}",
-                       error=str(exc))
+        raw = p.read_bytes()
+        for fnum, wtype, data in _iter_fields(raw):
+            if fnum == 1 and wtype == 0:
+                ir_version = int(data)
+            elif fnum == 7 and wtype == 2:  # GraphProto graph
+                _parse_graph(data, findings, ops_seen, domains_seen)
+    except Exception as e:
+        return {
+            "verdict": "SUSPICIOUS",
+            "confidence": 0.60,
+            "format": "ONNX",
+            "summary": f"Malformed ONNX Protobuf structure: {e}",
+            "findings": [{"severity": "SUSPICIOUS", "type": "ONNX_PARSE_ERROR", "detail": str(e)}],
+            "features": {"format": "ONNX", "parse_error": str(e)},
+        }
 
-    custom_ops: List[str] = []
-    deprecated_ops: List[str] = []
-    external_hits: List[str] = []
-    dim_hits: List[str] = []
+    has_mal = any(f["severity"] == "MALICIOUS" for f in findings)
+    has_susp = any(f["severity"] == "SUSPICIOUS" for f in findings)
 
-    graph = model.graph
+    if has_mal:
+        verdict, conf = "MALICIOUS", 0.96
+        summary = f"Hostile ONNX construct detected ({findings[0]['type']}): {findings[0]['detail']}"
+    elif has_susp:
+        verdict, conf = "SUSPICIOUS", 0.72
+        summary = f"Custom ONNX domain requires review: {findings[0]['detail']}"
+    else:
+        verdict, conf = "BENIGN", 0.95
+        summary = f"Clean ONNX Protobuf graph (ir_version={ir_version}, ops={len(ops_seen)})"
 
-    # ---- graph & operator audit --------------------------------------- #
-    for node in graph.node:
-        domain = node.domain or ""
-        label = f"{domain}::{node.op_type}" if domain else node.op_type
-        if domain not in ALLOWED_DOMAINS:
-            custom_ops.append(f"{label} (node '{node.name}') — unrecognized domain")
-        elif domain in ("", "ai.onnx") and node.op_type not in STANDARD_OPS:
-            custom_ops.append(f"{label} (node '{node.name}') — non-standard op-type")
-        if node.op_type in {"Experimental"}:
-            deprecated_ops.append(label)
+    return {
+        "verdict": verdict,
+        "confidence": conf,
+        "format": "ONNX",
+        "summary": summary,
+        "findings": findings,
+        "features": {
+            "format": "ONNX",
+            "ir_version": ir_version,
+            "op_count": len(ops_seen),
+            "ops_sample": sorted(ops_seen)[:25],
+            "domains": sorted(domains_seen),
+        },
+    }
 
-    # ---- external data injection --------------------------------------- #
-    def _check_external(tensor, where: str) -> None:
-        if tensor.data_location == onnx.TensorProto.EXTERNAL or tensor.external_data:
-            for entry in tensor.external_data:
-                if entry.key == "location":
-                    loc = entry.value
-                    if _TRAVERSAL_RE.search(loc):
-                        external_hits.append(f"{where}: malicious location '{loc}'")
-                    else:
-                        external_hits.append(f"{where}: external reference '{loc}'")
-
-    for init in graph.initializer:
-        _check_external(init, f"initializer '{init.name}'")
-    for sparse in graph.sparse_initializer:
-        _check_external(sparse.indices, f"sparse '{sparse.dims}' indices")
-        _check_external(sparse.values, "sparse values")
-
-    # ---- malformed dimensions / allocation bombs ------------------------ #
-    def _check_dims(dims, where: str) -> None:
-        product = 1
-        for d in dims:
-            if d.dim_value < 0:
-                dim_hits.append(f"{where}: negative dimension {d.dim_value}")
-                return
-            if d.dim_value:
-                product *= d.dim_value
-            if product > DIM_PRODUCT_LIMIT:
-                dim_hits.append(f"{where}: dimension product exceeds 2^40")
-                return
-
-    for vi in list(graph.value_info) + list(graph.input) + list(graph.output):
-        if vi.type.HasField("tensor_type"):
-            _check_dims(vi.type.tensor_type.shape.dim, f"value_info '{vi.name}'")
-    for init in graph.initializer:
-        product = 1
-        for d in init.dims:
-            if d < 0:
-                dim_hits.append(f"initializer '{init.name}': negative dim {d}")
-                break
-            product *= max(d, 1)
-            if product > DIM_PRODUCT_LIMIT:
-                dim_hits.append(f"initializer '{init.name}': dim product > 2^40")
-                break
-
-    details = dict(
-        ir_version=model.ir_version,
-        opset_imports={o.domain or "ai.onnx": o.version
-                       for o in model.opset_import},
-        node_count=len(graph.node), initializer_count=len(graph.initializer),
-        custom_operators=custom_ops, deprecated_operators=deprecated_ops,
-        external_data_references=external_hits, dimension_anomalies=dim_hits,
-    )
-
-    malicious_external = [h for h in external_hits if "malicious" in h]
-    if malicious_external:
-        return _report(name, "MALICIOUS", "HIGH", "PATH_TRAVERSAL",
-                       "External-data references escape the model directory "
-                       "(traversal / absolute path).", **details)
-    if dim_hits:
-        return _report(name, "MALICIOUS", "HIGH", "DOS_BOMB",
-                       "Tensor dimensions are malformed or imply impossible "
-                       "allocations (allocation bomb).", **details)
-    if custom_ops or deprecated_ops:
-        return _report(name, "SUSPICIOUS", "MEDIUM", "NONE",
-                       f"{len(custom_ops)} custom/unrecognized operators, "
-                       f"{len(deprecated_ops)} deprecated operators.",
-                       **details)
-    return _report(name, "BENIGN", "HIGH", "NONE",
-                   f"Clean ONNX graph: {len(graph.node)} nodes, all ops "
-                   f"standard, no external data anomalies.", **details)
-
-
-if __name__ == "__main__":
-    import sys
-    print(json.dumps(scan_onnx(sys.argv[1]), indent=2, default=str))
+scan = scan_onnx
+inspect_onnx = scan_onnx

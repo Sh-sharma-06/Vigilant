@@ -1,4 +1,5 @@
 FROM python:3.10-slim
-WORKDIR /sandbox
-COPY fakenet_server.py /sandbox/fakenet_server.py
+WORKDIR /app
+RUN pip install --no-cache-dir fastapi uvicorn pydantic dnslib
+COPY fakenet_server.py /app/
 CMD ["python", "fakenet_server.py"]

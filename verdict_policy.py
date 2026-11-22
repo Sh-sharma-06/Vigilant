@@ -19,7 +19,7 @@ import pickle_scanner
 
 # Bump when rules change; vigilant_one.py puts it in the cache file name so old
 # cached verdicts are never reused after a policy change.
-POLICY_VERSION = "4"
+POLICY_VERSION = "3"
 
 RANK = {"BENIGN": 0, "SUSPICIOUS": 1, "MALICIOUS": 2}
 
@@ -127,13 +127,12 @@ def static_verdict(path: str) -> Dict[str, Any]:
 _PROCESS = {"AUDIT_PROCESS"}
 _NETWORK = {"SOCKET_CONNECT", "AUDIT_NETWORK", "URLLIB_OPEN", "HTTP_REQUEST"}
 _RECON = {"RECON_FILE_INTERCEPT", "RECON_ENV_INTERCEPT", "AUDIT_OPEN"}
-_EXIT = {"ANTI_SANDBOX_EXIT"}
 
 
 def escalate(telemetry: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Any blocked process spawn, network attempt or credential recon = MALICIOUS.
     A model checkpoint has no reason to do any of these while loading."""
-    buckets = {"PROCESS_EXEC": [], "NETWORK_EGRESS": [], "CREDENTIAL_RECON": [], "ANTI_SANDBOX_EXIT": []}
+    buckets = {"PROCESS_EXEC": [], "NETWORK_EGRESS": [], "CREDENTIAL_RECON": []}
     for ev in telemetry or []:
         name = ev.get("event")
         if name in _PROCESS:
@@ -142,9 +141,7 @@ def escalate(telemetry: List[Dict[str, Any]]) -> Dict[str, Any]:
             buckets["NETWORK_EGRESS"].append(ev)
         elif name in _RECON:
             buckets["CREDENTIAL_RECON"].append(ev)
-        elif name in _EXIT:
-            buckets["ANTI_SANDBOX_EXIT"].append(ev)
-    for vector in ("PROCESS_EXEC", "NETWORK_EGRESS", "CREDENTIAL_RECON", "ANTI_SANDBOX_EXIT"):
+    for vector in ("PROCESS_EXEC", "NETWORK_EGRESS", "CREDENTIAL_RECON"):
         if buckets[vector]:
             return _result("MALICIOUS", vector,
                            f"honeypot recorded {len(buckets[vector])} "

@@ -1,40 +1,43 @@
-venv/
-.venv/
-.python-version
-
-*.log
-
-# Large ML model files
+# Ignore heavy ML model payloads to prevent GitHub push rejections
 *.pt
 *.pth
 *.bin
 *.pkl
 
-# Python cache
-__pycache__/
-
-# Logs
-logs/*
-!logs/.gitkeep
-
-# Generated reports
-final_report.json
-# Vigilant Exclusions
+# Ignore the virtual environment
 venv/
-__pycache__/
-eval_dataset/
-*.pkl
-*.pt
-*.bin
+
+# Ignore massive model archives and runtime artifacts
 *.zip
 *.7z
-*.h5
+*.pt
+*.pth
+*.bin
 *.onnx
-*.safetensors
 *.gguf
-
-vigilant_scan_cache/
-
-# Generated runtime cache
+*.safetensors
+eval_dataset/
 vigilant_cache/
-vigilant_cache/
+venv/
+__pycache__/
+*.log
+
+# Virtual environments & caches
+.venv/
+pwned/
+venv/
+__pycache__/
+*.pyc
+
+# Evaluation datasets & runtime logs
+eval_dataset/
+logs/
+*.pt
+*.pth
+*.bin
+*.pkl
+*.pickle
+*.onnx
+*.h5
+*.7z
+*.zip

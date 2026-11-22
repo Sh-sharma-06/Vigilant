@@ -1,0 +1,24 @@
+{
+  "total_unique_corpus": 545,
+  "dev_samples": 433,
+  "test_samples_held_out": 112,
+  "dev_accuracy_pct": 96.07,
+  "test_accuracy_pct": 96.43,
+  "sample_react_malicious_audit": {
+    "model_name": "malhug_00001_train_header.ckpt",
+    "risk_probability": 0.9569,
+    "monotonic_gate": "LOCKED_MALICIOUS (One-Way Monotonic Gate enforced)",
+    "remediation": {
+      "vulnerable_pattern": "pickle.load(open(path, 'rb'))",
+      "remediated_code": "safetensors.numpy.load_file(path)",
+      "levenshtein_patch_distance": 28,
+      "rationale": "Replace raw Python pickle deserialization with memory-safe tensor deserialization",
+      "unified_diff": "--- vulnerable_loader.py\n+++ remediated_loader.py\n@@ -1 +1 @@\n-pickle.load(open(path, 'rb'))\n+safetensors.numpy.load_file(path)"
+    }
+  },
+  "sample_react_benign_attestation": {
+    "model_name": "malhug_00032_safe_model.pkl",
+    "risk_probability": 0.9241,
+    "attestation": null
+  }
+}

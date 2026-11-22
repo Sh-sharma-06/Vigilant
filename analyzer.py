@@ -1,60 +1,69 @@
-import sys
-import json
-import os
+"""Pure metadata analysis with Split, Format, and Provenance breakdowns."""
+from collections import Counter, defaultdict
 
-def analyze_telemetry(parsed_data):
-    score = 0
-    reasons = []
+def classify(record):
+    verdict = record.get('verdict')
+    expected = record.get('expected', record.get('expected_label'))
+    if verdict == 'ERROR': return 'ERR'
+    if verdict == 'TIMEOUT': return 'TIMEOUT'
+    if expected == 'MALICIOUS': return 'TP' if verdict in ('MALICIOUS', 'SUSPICIOUS') else 'FN'
+    if expected == 'BENIGN':
+        if verdict in ('MALICIOUS', 'SUSPICIOUS'): return 'FP'
+        if verdict == 'BENIGN': return 'TN'
+    return 'UNKNOWN'
 
-    # 1. Process Check (Exact basename matching)
-    for proc in parsed_data.get("processes", []):
-        binary = proc.get("binary", "")
-        cmd = proc.get("command", "").lower()
-        basename = os.path.basename(binary).lower()
-        
-        # Exact match for shells
-        if basename in {"sh", "bash", "dash", "zsh"}:
-            score += 50
-            reasons.append(f"Spawned shell: {binary}")
-            
-        # Flag clear exfiltration/downloaders 
-        if "curl " in cmd or "wget " in cmd:
-            score += 40
-            reasons.append(f"Potential exfiltration command: {cmd}")
+def compute_confusion_matrix(records):
+    counts = {key: 0 for key in ('TP', 'TN', 'FP', 'FN', 'ERR', 'TIMEOUT', 'UNKNOWN')}
+    for record in records:
+        counts[classify(record)] += 1
+    total = sum(counts.values()) or 1
+    tp, tn, fp, fn = counts['TP'], counts['TN'], counts['FP'], counts['FN']
+    counts['recall'] = round(tp / (tp + fn), 4) if (tp + fn) > 0 else 0.0
+    counts['fpr'] = round(fp / (fp + tn), 4) if (fp + tn) > 0 else 0.0
+    counts['dropout_rate'] = round((counts['ERR'] + counts['TIMEOUT']) / total, 4)
+    return counts
 
-    # 2. File I/O Check
-    for file_path in parsed_data.get("files_written", []):
-        if file_path.startswith("/tmp/") or file_path.startswith("/etc/") or file_path.startswith("/root/"):
-            score += 30
-            reasons.append(f"Suspicious file write: {file_path}")
+def compute_stratified_metrics(records):
+    """Breaks metrics down by split (dev vs test), format, and provenance."""
+    by_split = defaultdict(list)
+    by_format = defaultdict(list)
+    by_prov = defaultdict(list)
 
-    # 3. Network Check (Known Limitation: Needs Domain Allowlist)
-    for conn in parsed_data.get("network_connections", []):
-        ip = conn.get("destination_ip")
-        # TODO: Implement Phase 4 Category-Based Domain Allowlist (e.g., huggingface.co IPs)
-        # Currently flagging all external IPs equally as a baseline constraint.
-        if ip not in ["127.0.0.1", "0.0.0.0"]:
-            # Any external connection is an immediate high-confidence
-            # compromise indicator; it must not be diluted by other scoring.
-            score = 100
-            reasons.append(f"External network connection: {ip}:{conn.get('port')}")
-
-    score = min(score, 100)
-    verdict = "MALICIOUS" if score >= 60 else "BENIGN"
+    for r in records:
+        by_split[r.get('split', 'unknown')].append(r)
+        by_format[r.get('format', 'UNKNOWN')].append(r)
+        by_prov[r.get('provenance', 'unknown')].append(r)
 
     return {
-        "verdict": verdict,
-        "risk_score": score,
-        "flags": reasons
+        "overall": compute_confusion_matrix(records),
+        "by_split": {k: compute_confusion_matrix(v) for k, v in by_split.items()},
+        "by_format": {k: compute_confusion_matrix(v) for k, v in by_format.items()},
+        "by_provenance": {k: compute_confusion_matrix(v) for k, v in by_prov.items()},
     }
 
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python3 analyzer.py <parsed_telemetry.json>")
-        sys.exit(1)
-        
-    with open(sys.argv[1], 'r') as f:
-        data = json.load(f)
-        
-    result = analyze_telemetry(data)
-    print(json.dumps(result, indent=2))
+def cluster_failure_signatures(records, split_filter="dev"):
+    """Only cluster failure signatures on the DEV split so TEST remains untouched!"""
+    counts = Counter()
+    for record in records:
+        if split_filter and record.get('split') != split_filter:
+            continue
+        outcome = classify(record)
+        if outcome not in ('FP', 'FN'):
+            continue
+        features = record.get('features') or {}
+        tokens = set(features.get('globals', []) + features.get('stack_globals', []))
+        for token in tokens or {'archive / structural signature'}:
+            counts[outcome, token] += 1
+    return [
+        dict(
+            outcome=outcome,
+            token=token,
+            count=count,
+            recommendation=(
+                'Review safe import context on DEV split before adjusting allowlist.'
+                if outcome == 'FP'
+                else 'Inspect DEV execution trace and add targeted rule.'
+            ),
+        )
+        for (outcome, token), count in counts.most_common()
+    ]
