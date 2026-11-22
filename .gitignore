@@ -41,3 +41,8 @@ logs/
 *.h5
 *.7z
 *.zip
+
+# Local cache and backup files
+.triage_cache.sqlite
+*.bak
+*.orig
