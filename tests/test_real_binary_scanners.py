@@ -7,6 +7,11 @@ from inspectors.onnx_scanner import scan_onnx
 from inspectors.gguf_scanner import scan_gguf
 from inspectors.hdf5_scanner import scan_hdf5
 
+try:
+    import h5py
+except ImportError:
+    h5py = None
+
 def _varint(n: int) -> bytes:
     out = bytearray()
     while n > 0x7F:
@@ -57,7 +62,11 @@ def run():
         benign_fn = base64.b64encode(marshal.dumps((lambda x: x + 1).__code__)).decode()
         evil_fn = base64.b64encode(marshal.dumps(compile("import os; os.system('id')", "<x>", "exec"))).decode()
         ok_h5, susp_h5, evil_h5 = d / "ok.h5", d / "susp.h5", d / "evil.h5"
-        ok_h5.write_bytes(b"\x89HDF\r\n\x1a\n" + b"\x00" * 64)
+        if h5py is not None:
+            with h5py.File(ok_h5, "w") as hf:
+                hf.create_dataset("weights", data=np.array([1.0, 2.0, 3.0], dtype=np.float32))
+        else:
+            ok_h5.write_bytes(b"\x89HDF\r\n\x1a\n" + b"\x00" * 64)
         susp_h5.write_bytes(b"\x89HDF\r\n\x1a\n" + json.dumps({"class_name": "Lambda", "config": {"name": "l1", "function": [benign_fn]}}).encode())
         evil_h5.write_bytes(b"\x89HDF\r\n\x1a\n" + json.dumps({"class_name": "Lambda", "config": {"name": "l2", "function": [evil_fn]}}).encode())
         assert scan_hdf5(str(ok_h5))["verdict"] == "BENIGN"
